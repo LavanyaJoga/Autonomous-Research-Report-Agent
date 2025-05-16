@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Simple React Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="test-root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  
+  <script type="text/javascript">
+    // Simple React component
+    const TestComponent = () => {
+      return React.createElement('div', { className: 'p-4 bg-blue-100 m-4 rounded' },
+        React.createElement('h1', { className: 'text-2xl text-blue-800' }, 'React is working!'),
+        React.createElement('p', { className: 'mt-2' }, 'If you can see this, React is loaded correctly.')
+      );
+    };
+    
+    // Render the test component
+    ReactDOM.createRoot(document.getElementById('test-root')).render(
+      React.createElement(TestComponent)
+    );
+  </script>
+</body>
+</html>

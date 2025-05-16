@@ -1,0 +1,110 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    color: #212529;
+    line-height: 1.6;
+}
+
+.app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.app-header {
+    background-color: #343a40;
+    color: white;
+    padding: 1rem 2rem;
+    margin-bottom: 2rem;
+    border-radius: 0.5rem;
+}
+
+.research-form {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 2rem;
+}
+
+.research-form textarea {
+    min-height: 120px;
+}
+
+.validation-feedback {
+    margin-top: 1rem;
+    padding: 1rem;
+    border-radius: 0.25rem;
+}
+
+.validation-feedback.invalid {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+}
+
+.validation-feedback.valid {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+}
+
+.score-indicator {
+    display: inline-block;
+    width: 100px;
+    height: 8px;
+    background-color: #e9ecef;
+    border-radius: 4px;
+    margin-right: 0.5rem;
+}
+
+.score-indicator .fill {
+    height: 100%;
+    border-radius: 4px;
+    background-color: #28a745;
+}
+
+.research-status {
+    background-color: white;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 2rem;
+}
+
+.results-container {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+.source-item {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.source-item:last-child {
+    border-bottom: none;
+}
+
+.tab-content {
+    padding: 1rem 0;
+}
+
+.report-container {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+.report-metadata {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.citation {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
