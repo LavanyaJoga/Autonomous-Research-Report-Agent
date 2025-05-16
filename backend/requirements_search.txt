@@ -1,0 +1,22 @@
+# Requirements for web search functionality
+
+# SerpAPI for Google search results
+google-search-results>=2.4.1
+
+# DuckDuckGo search
+duckduckgo-search>=3.0.0
+
+# LangChain tools
+langchain>=0.0.267
+langchain-google-genai>=0.0.1
+
+# Web scraping and processing
+requests>=2.28.2
+beautifulsoup4>=4.11.2
+lxml>=4.9.2
+
+# For content extraction
+trafilatura>=1.4.0
+newspaper3k>=0.2.8
+
+# Add these to your main requirements.txt or install separately
