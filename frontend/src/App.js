@@ -247,42 +247,6 @@ const ResearchResults = ({ research }) => {
       <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-6">
         <p className="text-sm text-gray-600">{research.stats}</p>
       </div>
-      
-      <h3 className="text-lg font-medium text-gray-800 mb-3">Report Sections</h3>
-      <div className="space-y-4 mb-6">
-        {research.subtopics.map((topic, index) => (
-          <div key={index} className="border border-gray-200 rounded-lg p-4">
-            <h4 className="font-medium text-gray-800">{topic}</h4>
-            <p className="text-sm text-gray-500 mt-1">[Section content in full report]</p>
-          </div>
-        ))}
-      </div>
-      
-      <h3 className="text-lg font-medium text-gray-800 mb-3">Download Report</h3>
-      <div className="flex space-x-3">
-        <a 
-          href={`http://localhost:8000/api/download?path=${encodeURIComponent(research.md_path)}`} 
-          className="inline-flex items-center px-4 py-2 border border-blue-600 rounded-md text-blue-600 bg-white hover:bg-blue-50 transition-colors"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <svg className="w-5 h-5 mr-2" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-          </svg>
-          Markdown
-        </a>
-        <a 
-          href={`http://localhost:8000/api/download?path=${encodeURIComponent(research.pdf_path)}`} 
-          className="inline-flex items-center px-4 py-2 border border-blue-600 rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <svg className="w-5 h-5 mr-2" fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-          </svg>
-          PDF
-        </a>
-      </div>
     </div>
   );
 };
@@ -292,6 +256,8 @@ const WebResources = ({ taskId, isLoading }) => {
   const [webResources, setWebResources] = useState([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [urlSummaries, setUrlSummaries] = useState({});
+  const [summaryLoadingStates, setSummaryLoadingStates] = useState({});
 
   // Fetch web resources when taskId changes
   useEffect(() => {
@@ -309,8 +275,20 @@ const WebResources = ({ taskId, isLoading }) => {
         }
         
         const data = await response.json();
+        
+        // Check if the structure is resources_by_subtopic or the newer flat resources structure
         if (data.resources_by_subtopic) {
           setWebResources(data.resources_by_subtopic);
+        } else if (data.resources) {
+          // Handle flat structure by putting all resources under "Main Resources"
+          setWebResources({
+            "Main Resources": data.resources
+          });
+        }
+        
+        // If URL summaries are included in the response, use them
+        if (data.url_summaries) {
+          setUrlSummaries(data.url_summaries);
         }
       } catch (err) {
         console.error("Error fetching web resources:", err);
@@ -322,6 +300,70 @@ const WebResources = ({ taskId, isLoading }) => {
 
     fetchWebResources();
   }, [taskId]);
+
+  // Automatically fetch summaries for URLs that don't have them
+  useEffect(() => {
+    if (!webResources || Object.keys(webResources).length === 0) return;
+
+    // Collect all URLs that need summaries
+    const urlsToFetch = [];
+    
+    // For each subtopic and its resources, check if we need summaries
+    Object.values(webResources).forEach(resources => {
+      resources.forEach(resource => {
+        if (!urlSummaries[resource.url] && !summaryLoadingStates[resource.url]) {
+          urlsToFetch.push(resource.url);
+        }
+      });
+    });
+
+    // Fetch summaries for up to 3 URLs at a time to avoid overwhelming the server
+    const fetchBatch = urlsToFetch.slice(0, 3);
+    
+    if (fetchBatch.length > 0) {
+      fetchBatch.forEach(url => fetchUrlSummary(url));
+    }
+  }, [webResources, urlSummaries, summaryLoadingStates]);
+
+  // Function to fetch summary for a URL
+  const fetchUrlSummary = async (url) => {
+    // Skip if already fetching or if we already have the summary
+    if (summaryLoadingStates[url] || urlSummaries[url]) return;
+    
+    // Mark as loading
+    setSummaryLoadingStates(prev => ({
+      ...prev,
+      [url]: true
+    }));
+    
+    try {
+      const encodedUrl = encodeURIComponent(url);
+      const response = await fetch(`http://localhost:8000/api/summarize-url?url=${encodedUrl}`);
+      
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Update the URL summaries
+      setUrlSummaries(prev => ({
+        ...prev,
+        [url]: data.summary || "No summary available."
+      }));
+    } catch (err) {
+      console.error("Error fetching URL summary:", err);
+      setUrlSummaries(prev => ({
+        ...prev,
+        [url]: `Failed to fetch summary: ${err.message}`
+      }));
+    } finally {
+      setSummaryLoadingStates(prev => ({
+        ...prev,
+        [url]: false
+      }));
+    }
+  };
 
   if (!taskId) return null;
   
@@ -363,16 +405,38 @@ const WebResources = ({ taskId, isLoading }) => {
         <div key={subtopic} className="mb-6">
           <h3 className="text-lg font-medium text-gray-800 mb-3">{subtopic}</h3>
           
-          <ul className="space-y-3">
+          <ul className="space-y-4">
             {resources.map((resource, index) => (
-              <li key={index} className="border border-gray-100 bg-gray-50 rounded-md p-3">
-                <a href={resource.url} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer">
-                  {resource.title || 'Untitled Resource'}
-                </a>
-                <p className="text-sm text-gray-600 mt-1">
+              <li key={index} className="border border-gray-200 bg-gray-50 rounded-md p-4">
+                <div>
+                  <a href={resource.url} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer">
+                    {resource.title || 'Untitled Resource'}
+                  </a>
+                </div>
+                
+                <p className="text-sm text-gray-600 mt-1 mb-3">
                   {resource.snippet || 'No description available'}
                 </p>
-                <div className="flex items-center mt-2 text-xs text-gray-500">
+                
+                {/* Always show summary section */}
+                <div className="mt-2 bg-blue-50 p-3 rounded-md border border-blue-100">
+                  <h4 className="text-sm font-medium text-blue-800 mb-1">Summary:</h4>
+                  {summaryLoadingStates[resource.url] ? (
+                    <div className="flex items-center text-sm text-gray-500">
+                      <svg className="animate-spin h-4 w-4 mr-2 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Generating summary...</span>
+                    </div>
+                  ) : urlSummaries[resource.url] ? (
+                    <p className="text-sm text-gray-700">{urlSummaries[resource.url]}</p>
+                  ) : (
+                    <p className="text-sm text-gray-500 italic">Summary will appear here shortly...</p>
+                  )}
+                </div>
+                
+                <div className="flex items-center mt-3 text-xs text-gray-500">
                   <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                     <path fillRule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clipRule="evenodd"></path>
                   </svg>
@@ -397,7 +461,6 @@ function App() {
   const [researchResults, setResearchResults] = useState(null);
   const [searchQueries, setSearchQueries] = useState(null);
   const [progress, setProgress] = useState(0);
-  // Add state for lastApiResponse
   const [lastApiResponse, setLastApiResponse] = useState(null);
 
   // Research steps

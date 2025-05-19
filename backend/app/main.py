@@ -802,7 +802,8 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
         "web_resources": [],
         "alternative_perspectives": [],
         "subtopics": [],
-        "summary": f"Analyzing '{request.query}'..."
+        "summary": f"Analyzing '{request.query}'...",
+        "url_summaries": {}  # Add a field for URL content summaries
     }
     
     # Generate initial web resources first before any other processing
@@ -814,6 +815,16 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
         try:
             print(f"Getting initial web resources for: {request.query}")
             web_agent = WebSearchAgent()
+            
+            # Extract key terms for better search
+            try:
+                from app.routes.search_routes import extract_key_terms
+                query_terms = extract_key_terms(request.query)
+                print(f"Extracted key search terms: {query_terms}")
+            except Exception as term_error:
+                print(f"Error extracting key terms: {str(term_error)}")
+                # Simple fallback extraction
+                query_terms = [word for word in request.query.split() if len(word) > 3][:5]
             
             # First, do a targeted search with the most important terms
             if query_terms:
@@ -836,6 +847,141 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
                             result['search_method'] = 'full_query'
                             web_resources.append(result)
                     print(f"Found {len(direct_results)} direct web resources")
+            
+            # Add initial web resources to immediate_results
+            immediate_results["web_resources"] = web_resources
+            
+            # Now fetch and summarize content from the top web resources
+            url_summaries = {}
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # Define a function to fetch and summarize a single URL
+            def fetch_and_summarize_url(url_info):
+                try:
+                    url = url_info["url"]
+                    title = url_info["title"]
+                    print(f"Fetching content from {url}")
+                    
+                    # Import content extraction utilities
+                    try:
+                        from langchain.document_loaders import WebBaseLoader
+                        from langchain.text_splitter import RecursiveCharacterTextSplitter
+                        from langchain.chains.summarize import load_summarize_chain
+                        from langchain.chat_models import ChatOpenAI
+                        
+                        # Load content from URL
+                        loader = WebBaseLoader(url)
+                        docs = loader.load()
+                        
+                        # Split into chunks
+                        text_splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=2000,
+                            chunk_overlap=100
+                        )
+                        chunks = text_splitter.split_documents(docs)
+                        
+                        # Limit to first few chunks to avoid token limits
+                        if len(chunks) > 5:
+                            chunks = chunks[:5]
+                            
+                        # Initialize LLM for summarization
+                        llm = ChatOpenAI(
+                            temperature=0, 
+                            model="gpt-4o",
+                            request_timeout=30
+                        )
+                        
+                        # Create summarization chain
+                        chain = load_summarize_chain(
+                            llm, 
+                            chain_type="map_reduce", 
+                            verbose=False
+                        )
+                        
+                        # Generate summary
+                        summary = chain.run(chunks)
+                        
+                        return {
+                            "url": url,
+                            "title": title,
+                            "summary": summary,
+                            "success": True
+                        }
+                    except Exception as e:
+                        print(f"Error using LangChain for URL {url}: {str(e)}")
+                        # Fallback to OpenAI directly
+                        try:
+                            from app.utils.content_extractor import extract_text_from_url
+                            from openai import OpenAI
+                            
+                            # Extract text content
+                            content = extract_text_from_url(url)
+                            if not content or len(content) < 50:
+                                return {
+                                    "url": url,
+                                    "title": title,
+                                    "summary": "Could not extract meaningful content from this URL.",
+                                    "success": False
+                                }
+                            
+                            # Truncate content if too long
+                            max_chars = 8000
+                            if len(content) > max_chars:
+                                content = content[:max_chars] + "..."
+                            
+                            # Use OpenAI for summarization
+                            client = OpenAI()
+                            response = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=[
+                                    {"role": "system", "content": "You are a helpful assistant that concisely summarizes web content."},
+                                    {"role": "user", "content": f"Please summarize the following content from {title} in 2-3 sentences. Focus on the main points:\n\n{content}"}
+                                ],
+                                max_tokens=200,
+                                temperature=0.3
+                            )
+                            
+                            summary = response.choices[0].message.content
+                            return {
+                                "url": url,
+                                "title": title,
+                                "summary": summary,
+                                "success": True
+                            }
+                        except Exception as inner_e:
+                            print(f"Both summarization methods failed for {url}: {str(inner_e)}")
+                            return {
+                                "url": url,
+                                "title": title,
+                                "summary": f"Could not summarize content due to: {str(inner_e)}",
+                                "success": False
+                            }
+                except Exception as e:
+                    print(f"Error processing URL {url_info.get('url')}: {str(e)}")
+                    return {
+                        "url": url_info.get("url", "unknown"),
+                        "title": url_info.get("title", "Unknown Title"),
+                        "summary": "Error fetching or processing content.",
+                        "success": False
+                    }
+            
+            # Process the top 3 URLs to get summaries
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                top_urls = web_resources[:3]
+                summary_results = list(executor.map(fetch_and_summarize_url, top_urls))
+                
+                # Add successful summaries to the result
+                for result in summary_results:
+                    if result["success"]:
+                        url_summaries[result["url"]] = {
+                            "title": result["title"],
+                            "summary": result["summary"]
+                        }
+            
+            # Add summaries to immediate_results
+            immediate_results["url_summaries"] = url_summaries
+            print(f"Added {len(url_summaries)} URL summaries to immediate results")
             
             # Try to extract content from high-relevance resources for better analysis
             analyzed_resources = []
@@ -1345,6 +1491,9 @@ async def get_web_resources(task_id: str):
                 # Add alternative perspectives if available
                 if alternative_resources and len(alternative_resources) > 0:
                     resources_by_type["Alternative Perspectives"] = alternative_resources
+
+                # Add url_summaries if they exist
+                url_summaries = task["immediate_results"].get("url_summaries", {})
                 
                 # Return these immediately instead of waiting
                 print(f"Returning pre-loaded resources for task {task_id}")
@@ -1352,6 +1501,7 @@ async def get_web_resources(task_id: str):
                     "task_id": task_id,
                     "query": main_query,
                     "resources_by_subtopic": resources_by_type,
+                    "url_summaries": url_summaries,  # Include summaries directly
                     "total_results": len(web_resources) + len(alternative_resources),
                     "status": "success",
                     "message": "Quick results - refresh for more detailed results"
@@ -1381,6 +1531,7 @@ async def get_web_resources(task_id: str):
     
     web_resources_by_subtopic = {}
     all_results = []
+    url_summaries = {}  # Store URL summaries
     start_time = time.time()
     
     try:
@@ -1397,6 +1548,18 @@ async def get_web_resources(task_id: str):
                     web_resources_by_subtopic["General Resources"] = general_results
                     all_results.extend([{**r, 'subtopic': "General Resources"} for r in general_results])
                     print(f"Found {len(general_results)} resources for the main query")
+                    
+                    # Automatically generate summaries for the top results
+                    for result in general_results[:2]:  # Limit to top 2 to avoid delays
+                        try:
+                            url_summary = await _summarize_url(result['url'])
+                            if url_summary.get("success"):
+                                url_summaries[result['url']] = {
+                                    "title": result['title'],
+                                    "summary": url_summary.get("summary", "No summary available")
+                                }
+                        except Exception as summary_err:
+                            print(f"Error summarizing URL {result['url']}: {str(summary_err)}")
             except Exception as general_error:
                 print(f"Error getting general resources: {str(general_error)}")
             
@@ -1423,6 +1586,19 @@ async def get_web_resources(task_id: str):
                         web_resources_by_subtopic[subtopic] = results
                         all_results.extend([{**r, 'subtopic': subtopic} for r in results])
                         print(f"Found {len(results)} resources for: {subtopic}")
+                        
+                        # Automatically generate a summary for the top result for each subtopic
+                        if results and len(results) > 0:
+                            try:
+                                top_result = results[0]
+                                url_summary = await _summarize_url(top_result['url'])
+                                if url_summary.get("success"):
+                                    url_summaries[top_result['url']] = {
+                                        "title": top_result['title'],
+                                        "summary": url_summary.get("summary", "No summary available")
+                                    }
+                            except Exception as summary_err:
+                                print(f"Error summarizing URL for subtopic {subtopic}: {str(summary_err)}")
                     else:
                         web_resources_by_subtopic[subtopic] = []
                         print(f"No resources found for: {subtopic}")
@@ -1462,13 +1638,27 @@ async def get_web_resources(task_id: str):
                 
                 web_resources_by_subtopic["Reliable Resources"] = reliable_urls
                 all_results.extend([{**r, 'subtopic': "Reliable Resources"} for r in reliable_urls])
+                
+                # Try to get a summary for Wikipedia
+                try:
+                    wiki_url = reliable_urls[0]['url']
+                    url_summary = await _summarize_url(wiki_url)
+                    if url_summary.get("success"):
+                        url_summaries[wiki_url] = {
+                            "title": reliable_urls[0]['title'],
+                            "summary": url_summary.get("summary", "No summary available")
+                        }
+                except Exception as wiki_err:
+                    print(f"Error summarizing Wikipedia URL: {str(wiki_err)}")
             
             # Create the final response
             response = {
                 "task_id": task_id,
                 "query": main_query,
                 "resources_by_subtopic": web_resources_by_subtopic,
+                "url_summaries": url_summaries,  # Include all summaries
                 "total_results": len(all_results),
+                "summarized_urls": len(url_summaries),  # Add count of summarized URLs
                 "status": "success",
                 "processing_time": f"{time.time() - start_time:.2f} seconds"
             }
@@ -1499,4 +1689,120 @@ async def get_web_resources(task_id: str):
             "message": error_message,
             "error": str(e),
             "resources_by_subtopic": {}
+        }
+
+# Keep the summarize-url endpoints for direct API calls, but make them non-async
+# for compatibility with the automatic summarization
+
+@app.post("/api/summarize-url")
+def summarize_url_post(url_data: dict):
+    """Fetch and summarize content from a URL using POST."""
+    url = url_data.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    
+    return sync_summarize_url(url)
+
+@app.get("/api/summarize-url")
+def summarize_url_get(url: str):
+    """Fetch and summarize content from a URL using GET."""
+    if not url:
+        raise HTTPException(status_code=400, detail="URL parameter is required")
+    
+    return sync_summarize_url(url)
+
+async def _summarize_url(url: str):
+    """Async helper function to summarize URL content."""
+    try:
+        from app.utils.content_extractor import fetch_url_content, get_page_summary
+        
+        # Log the request for debugging
+        print(f"Summarizing URL: {url}")
+        
+        # Fetch the content with our robust fetcher
+        result = fetch_url_content(url)
+        
+        if not result["success"]:
+            print(f"Failed to fetch content from {url}: {result['error']}")
+            return {
+                "url": url,
+                "success": False,
+                "error": result["error"],
+                "message": f"Failed to fetch content: {result['error']}"
+            }
+        
+        # Generate summary if we got content
+        if result["content"]:
+            summary = get_page_summary(url, result["content"])
+            print(f"Successfully summarized {url}: {len(summary)} chars")
+            return {
+                "url": url,
+                "title": result["title"],
+                "description": result["description"],
+                "summary": summary,
+                "success": True
+            }
+        else:
+            print(f"No content extracted from {url}")
+            return {
+                "url": url,
+                "success": False,
+                "error": "No content extracted",
+                "message": "Could not extract meaningful content from the URL"
+            }
+    except Exception as e:
+        import traceback
+        print(f"Error summarizing URL {url}: {str(e)}")
+        traceback.print_exc()
+        return {
+            "url": url,
+            "success": False,
+            "error": str(e),
+            "message": f"Server error: {str(e)}"
+        }
+
+def sync_summarize_url(url: str):
+    """Synchronous version of the URL summarization function."""
+    try:
+        from app.utils.content_extractor import fetch_url_content, get_page_summary
+        
+        print(f"Summarizing URL (sync): {url}")
+        
+        # Fetch the content
+        result = fetch_url_content(url)
+        
+        if not result["success"]:
+            return {
+                "url": url,
+                "success": False,
+                "error": result["error"],
+                "message": f"Failed to fetch content: {result['error']}"
+            }
+        
+        # Generate summary if we got content
+        if result["content"]:
+            summary = get_page_summary(url, result["content"])
+            return {
+                "url": url,
+                "title": result["title"],
+                "description": result["description"],
+                "summary": summary,
+                "success": True
+            }
+        else:
+            return {
+                "url": url,
+                "success": False,
+                "error": "No content extracted",
+                "message": "Could not extract meaningful content from the URL"
+            }
+    except Exception as e:
+        import traceback
+        print(f"Error in sync summarize URL {url}: {str(e)}")
+        traceback.print_exc()
+        return {
+            "url": url,
+            "success": False,
+            "error": str(e),
+            "message": f"Server error: {str(e)}"
         }
