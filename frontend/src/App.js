@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import SearchForm from './components/SearchForm';
+import DebugPanel from './components/DebugPanel';
 
 // Header component with ResearchGPT branding
 const Header = ({ title }) => {
@@ -8,13 +9,6 @@ const Header = ({ title }) => {
     <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg py-4">
       <div className="container mx-auto px-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">{title}</h1>
-        <nav>
-          <ul className="flex space-x-6">
-            <li><a href="#home" className="hover:text-blue-200 transition-colors">Home</a></li>
-            <li><a href="#about" className="hover:text-blue-200 transition-colors">About</a></li>
-            <li><a href="#contact" className="hover:text-blue-200 transition-colors">Contact</a></li>
-          </ul>
-        </nav>
       </div>
     </header>
   );
@@ -25,7 +19,6 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
 
-
   const handleSubmit = (e) => {
     e.preventDefault();
     
@@ -35,7 +28,9 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
     }
     
     setError('');
-    onSubmit(query);
+    const currentQuery = query; // Store the query before clearing it
+    setQuery(''); // Clear the input field immediately
+    onSubmit(currentQuery);
   };
 
   const handleGenerateQueries = () => {
@@ -45,7 +40,15 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
     }
     
     setError('');
-    onGenerateQueries(query);
+    const currentQuery = query; // Store the query before clearing it
+    setQuery(''); // Clear the input field immediately
+    onGenerateQueries(currentQuery);
+  };
+
+  // Clear button handler
+  const handleClear = () => {
+    setQuery('');
+    setError('');
   };
 
   return (
@@ -54,15 +57,33 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
       
       <form onSubmit={handleSubmit}>
         <div className="mb-4">
-          <textarea
-            className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-            rows="4"
-            placeholder="Enter your research topic (e.g., 'How does solar geoengineering work?')"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            disabled={isLoading || isGeneratingQueries}
-            required
-          ></textarea>
+          <div className="relative">
+            <textarea
+              className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+              rows="4"
+              placeholder="Enter your research topic (e.g., 'How does solar geoengineering work?')"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              disabled={isLoading || isGeneratingQueries}
+              required
+              // Add a key to force input refresh
+              key={`research-input-${Date.now()}`}
+            ></textarea>
+            
+            {/* Add clear button */}
+            {query && (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                title="Clear input"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 001.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )}
+          </div>
           <div className="mt-1 text-sm text-gray-500">
             Enter a clear, specific research question (minimum 10 characters).
           </div>
@@ -266,6 +287,106 @@ const ResearchResults = ({ research }) => {
   );
 };
 
+// Web resources component
+const WebResources = ({ taskId, isLoading }) => {
+  const [webResources, setWebResources] = useState([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Fetch web resources when taskId changes
+  useEffect(() => {
+    if (!taskId) return;
+
+    const fetchWebResources = async () => {
+      setResourcesLoading(true);
+      try {
+        // Add a timestamp to prevent caching
+        const timestamp = Date.now();
+        const response = await fetch(`http://localhost:8000/api/research/${taskId}/web-resources?t=${timestamp}`);
+        
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.resources_by_subtopic) {
+          setWebResources(data.resources_by_subtopic);
+        }
+      } catch (err) {
+        console.error("Error fetching web resources:", err);
+        setError("Failed to fetch relevant web resources");
+      } finally {
+        setResourcesLoading(false);
+      }
+    };
+
+    fetchWebResources();
+  }, [taskId]);
+
+  if (!taskId) return null;
+  
+  if (resourcesLoading) {
+    return (
+      <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Web Resources</h2>
+        <div className="flex justify-center items-center py-8">
+          <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span className="ml-3 text-gray-600">Searching for relevant web resources...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Web Resources</h2>
+        <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-md">
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (Object.keys(webResources).length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-white shadow-md rounded-lg p-6 mb-8">
+      <h2 className="text-xl font-semibold text-gray-800 mb-4">Relevant Web Resources</h2>
+      
+      {Object.entries(webResources).map(([subtopic, resources]) => (
+        <div key={subtopic} className="mb-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-3">{subtopic}</h3>
+          
+          <ul className="space-y-3">
+            {resources.map((resource, index) => (
+              <li key={index} className="border border-gray-100 bg-gray-50 rounded-md p-3">
+                <a href={resource.url} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer">
+                  {resource.title || 'Untitled Resource'}
+                </a>
+                <p className="text-sm text-gray-600 mt-1">
+                  {resource.snippet || 'No description available'}
+                </p>
+                <div className="flex items-center mt-2 text-xs text-gray-500">
+                  <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                    <path fillRule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clipRule="evenodd"></path>
+                  </svg>
+                  <span className="truncate max-w-xs">{new URL(resource.url).hostname}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // Main App component
 function App() {
   const [isLoading, setIsLoading] = useState(false);
@@ -275,6 +396,9 @@ function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [researchResults, setResearchResults] = useState(null);
   const [searchQueries, setSearchQueries] = useState(null);
+  const [progress, setProgress] = useState(0);
+  // Add state for lastApiResponse
+  const [lastApiResponse, setLastApiResponse] = useState(null);
 
   // Research steps
   const researchSteps = [
@@ -304,15 +428,34 @@ function App() {
             return;
           }
           
-          const response = await fetch(`http://localhost:8000/api/research/${taskId}`);
+          console.log(`Polling status for task ${taskId}...`);
+          
+          // Add unique timestamp to prevent caching
+          const timestamp = Date.now();
+          const response = await fetch(`http://localhost:8000/api/research/${taskId}?_=${timestamp}`);
           
           if (!response.ok) {
             throw new Error(`Server returned ${response.status}`);
           }
           
           const data = await response.json();
+          console.log("Task status response:", data);
+          
+          // Validate the status field exists and has a valid value
+          if (!data.status) {
+            throw new Error("Response missing status field");
+          }
           
           if (data.status === "completed") {
+            // Validate required fields
+            const requiredFields = ["query", "summary", "subtopics"];
+            const missingFields = requiredFields.filter(field => !data[field]);
+            
+            if (missingFields.length > 0) {
+              console.warn(`Completed result missing fields: ${missingFields.join(', ')}`);
+              // Continue anyway - the backend should have filled in defaults
+            }
+            
             setResearchResults(data);
             setIsLoading(false);
             setCurrentStep(researchSteps.length);
@@ -322,14 +465,23 @@ function App() {
             if (data.current_step) {
               setCurrentStep(data.current_step);
             }
+            if (data.progress) {
+              setProgress(data.progress); // Now this will work since progress state is defined
+            }
+          } else if (data.status === "error") {
+            // Handle error state
+            setError(data.message || "Research failed with an unknown error");
+            setIsLoading(false);
+            clearInterval(pollInterval);
           } else {
-            // Handle error
-            setError(`Research failed: ${data.message || "Unknown error"}`);
+            // Unknown status
+            setError(`Research failed: Unrecognized status "${data.status}"`);
             setIsLoading(false);
             clearInterval(pollInterval);
           }
         } catch (err) {
-          setError("Failed to check research status");
+          console.error("Error polling research status:", err);
+          setError(`Failed to check research status: ${err.message}`);
           setIsLoading(false);
           clearInterval(pollInterval);
         }
@@ -339,13 +491,73 @@ function App() {
     }
   }, [taskId, isLoading, researchSteps.length]);
 
+  const handleSubmit = async (query) => {
+    setIsLoading(true);
+    setError(null);
+    setResearchResults(null);
+    setCurrentStep(0);
+    
+    try {
+      // Include timestamp and unique ID to ensure fresh results
+      const uniqueId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+      console.log("Starting research with query:", query);
+      
+      const response = await fetch('http://localhost:8000/api/research', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Request-ID': uniqueId,
+        },
+        body: JSON.stringify({ 
+          query,
+          timestamp: Date.now(),
+          requestId: uniqueId 
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("Research task started:", data);
+      
+      // Store the API response for debugging
+      setLastApiResponse(data);
+      
+      if (!data.task_id) {
+        throw new Error("Server response missing task ID");
+      }
+      
+      setTaskId(data.task_id);
+      setCurrentStep(1); // Starting the first step
+      
+      // Show immediate results if available
+      if (data.immediate_results) {
+        console.log("Received immediate results:", data.immediate_results);
+      }
+    } catch (err) {
+      console.error("Error starting research:", err);
+      setError(`Failed to start research: ${err.message}`);
+      setIsLoading(false);
+    }
+  };
+
   // Add a retry button functionality
   const handleRetry = () => {
+    console.log("Retrying research...");
     setError(null);
     setIsLoading(false);
     setTaskId(null);
     setCurrentStep(0);
     setResearchResults(null);
+    
+    // Clear any cached data
+    fetch('http://localhost:8000/api/clear-cache', {
+      method: 'POST',
+    }).then(response => response.json())
+      .then(data => console.log("Cache cleared:", data))
+      .catch(error => console.error("Error clearing cache:", error));
   };
 
   const handleGenerateQueries = async (query) => {
@@ -379,34 +591,6 @@ function App() {
       setError(`Failed to generate search queries: ${err.message}`);
     } finally {
       setIsGeneratingQueries(false);
-    }
-  };
-
-  const handleSubmit = async (query) => {
-    setIsLoading(true);
-    setError(null);
-    setResearchResults(null);
-    setCurrentStep(0);
-    
-    try {
-      const response = await fetch('http://localhost:8000/api/research', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query }),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-      
-      const data = await response.json();
-      setTaskId(data.task_id);
-      setCurrentStep(1); // Starting the first step
-    } catch (err) {
-      setError(`Failed to start research: ${err.message}`);
-      setIsLoading(false);
     }
   };
 
@@ -452,6 +636,9 @@ function App() {
             <section>
               <ResearchProgress currentStep={currentStep} steps={researchSteps} />
               
+              {/* Add web resources component */}
+              {taskId && <WebResources taskId={taskId} isLoading={isLoading} />}
+              
               {/* Add a cancel button */}
               <div className="text-center mt-4">
                 <button
@@ -470,14 +657,9 @@ function App() {
           {researchResults && (
             <section>
               <ResearchResults research={researchResults} />
+              <WebResources taskId={taskId} isLoading={false} />
             </section>
           )}
-          
-          {/* Add the SearchForm component route */}
-          <section>
-            <h2 className="text-3xl font-bold text-gray-800 mb-4">Search Component</h2>
-            <SearchForm />
-          </section>
         </div>
       </main>
 
@@ -486,6 +668,9 @@ function App() {
           <p>&copy; {new Date().getFullYear()} ResearchGPT - Autonomous Research & Report Agent</p>
         </div>
       </footer>
+      
+      {/* The DebugPanel with proper props */}
+      <DebugPanel taskId={taskId} lastResponse={lastApiResponse} />
     </div>
   );
 }
