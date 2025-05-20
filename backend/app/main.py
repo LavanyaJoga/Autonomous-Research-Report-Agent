@@ -749,6 +749,12 @@ from app.routes.search_routes import router as search_router
 # Include the search router in your FastAPI app
 app.include_router(search_router, prefix="/api", tags=["search"])
 
+# Import the report router
+from app.routes.report_routes import router as report_router
+
+# Include the report router in your FastAPI app
+app.include_router(report_router, prefix="/api", tags=["report"])
+
 # Define request and response models
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=10, description="The research topic to investigate")
@@ -1484,29 +1490,67 @@ async def get_web_resources(task_id: str):
             alternative_resources = task["immediate_results"].get("alternative_perspectives", [])
             
             if web_resources and len(web_resources) > 0:
+                # Modified filtering approach to ensure we get 6-7 resources
+                filtered_resources = []
+                seen_domains = set()
+                domain_counts = {}
+                
+                # Helper function to extract domain from URL
+                def get_domain(url):
+                    try:
+                        from urllib.parse import urlparse
+                        domain = urlparse(url).netloc.replace('www.', '')
+                        # Get base domain without subdomains
+                        parts = domain.split('.')
+                        if len(parts) > 2:
+                            domain = '.'.join(parts[-2:])
+                        return domain
+                    except:
+                        return url
+                
+                # First pass - include up to 2 resources from each domain to ensure diversity but get enough results
+                for resource in web_resources:
+                    domain = get_domain(resource['url'])
+                    domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                    
+                    # Allow up to 2 resources per domain
+                    if domain_counts[domain] <= 2:
+                        filtered_resources.append(resource)
+                        
+                    # Stop if we have enough resources
+                    if len(filtered_resources) >= 7:
+                        break
+                
+                # If we don't have at least 6 resources, add more
+                if len(filtered_resources) < 6:
+                    for resource in web_resources:
+                        if resource not in filtered_resources:
+                            filtered_resources.append(resource)
+                        if len(filtered_resources) >= 7:
+                            break
+                
+                print(f"Filtered resources: found {len(filtered_resources)} resources from {len(domain_counts)} domains")
+                            
                 resources_by_type = {
-                    "Main Resources": web_resources,
+                    "Main Resources": filtered_resources[:7],  # Limit to 7 resources
                 }
                 
-                # Add alternative perspectives if available
-                if alternative_resources and len(alternative_resources) > 0:
-                    resources_by_type["Alternative Perspectives"] = alternative_resources
-
                 # Add url_summaries if they exist
                 url_summaries = task["immediate_results"].get("url_summaries", {})
                 
                 # Return these immediately instead of waiting
-                print(f"Returning pre-loaded resources for task {task_id}")
+                print(f"Returning filtered resources for task {task_id} ({len(filtered_resources)} unique domains)")
                 return {
                     "task_id": task_id,
                     "query": main_query,
                     "resources_by_subtopic": resources_by_type,
                     "url_summaries": url_summaries,  # Include summaries directly
-                    "total_results": len(web_resources) + len(alternative_resources),
+                    "total_results": len(filtered_resources),
                     "status": "success",
-                    "message": "Quick results - refresh for more detailed results"
+                    "message": "Research results ready"
                 }
-    elif task.get("result"):
+    
+    if task.get("result"):
         if "subtopics" in task["result"]:
             subtopics = task["result"]["subtopics"]
         if "summary" in task["result"]:
@@ -1542,15 +1586,62 @@ async def get_web_resources(task_id: str):
             # Start with general resources since they typically work better
             try:
                 print(f"Searching for main query: {main_query}")
-                general_results = web_agent.search_web(main_query, num_results=4)
+                # Get more results initially to ensure diversity
+                general_results = web_agent.search_web(main_query, num_results=12)
                 
                 if general_results:
-                    web_resources_by_subtopic["General Resources"] = general_results
-                    all_results.extend([{**r, 'subtopic': "General Resources"} for r in general_results])
-                    print(f"Found {len(general_results)} resources for the main query")
+                    # Filter to ensure each result comes from a different domain
+                    unique_domain_results = []
+                    seen_domains = set()
                     
-                    # Automatically generate summaries for the top results
-                    for result in general_results[:2]:  # Limit to top 2 to avoid delays
+                    # Helper function to extract domain from URL
+                    def get_domain(url):
+                        try:
+                            from urllib.parse import urlparse
+                            return urlparse(url).netloc.replace('www.', '')
+                        except:
+                            return url
+                    
+                    # Content relevance check for better filtering
+                    def is_relevant(resource, query):
+                        # Check if title or snippet contains main query terms
+                        query_terms = set(query.lower().split())
+                        title_text = resource.get('title', '').lower()
+                        snippet_text = resource.get('snippet', '').lower()
+                        
+                        # Count how many query terms appear
+                        title_matches = sum(1 for term in query_terms if term in title_text)
+                        snippet_matches = sum(1 for term in query_terms if term in snippet_text)
+                        
+                        # If resource has good coverage of query terms, consider it relevant
+                        return (title_matches >= 1 and snippet_matches >= 1) or snippet_matches >= 2
+                    
+                    # First prioritize resources that actually contain the query terms
+                    for resource in general_results:
+                        domain = get_domain(resource['url'])
+                        if domain not in seen_domains and is_relevant(resource, main_query):
+                            seen_domains.add(domain)
+                            unique_domain_results.append(resource)
+                            # Get 6-7 diverse and relevant resources
+                            if len(unique_domain_results) >= 7:
+                                break
+                    
+                    # If we don't have enough resources, add remaining ones with unique domains
+                    if len(unique_domain_results) < 6:
+                        for resource in general_results:
+                            domain = get_domain(resource['url'])
+                            if domain not in seen_domains:
+                                seen_domains.add(domain)
+                                unique_domain_results.append(resource)
+                                if len(unique_domain_results) >= 7:
+                                    break
+                    
+                    web_resources_by_subtopic["Main Resources"] = unique_domain_results[:7]  # Ensure we take up to 7
+                    all_results.extend([{**r, 'subtopic': "Main Resources"} for r in unique_domain_results[:7]])
+                    print(f"Found {len(unique_domain_results[:7])} resources for the main query")
+
+                    # Automatically generate summaries for the top 3 results
+                    for result in unique_domain_results[:3]:
                         try:
                             url_summary = await _summarize_url(result['url'])
                             if url_summary.get("success"):
@@ -1651,14 +1742,14 @@ async def get_web_resources(task_id: str):
                 except Exception as wiki_err:
                     print(f"Error summarizing Wikipedia URL: {str(wiki_err)}")
             
-            # Create the final response
+            # Create the final response with flattened resources list limited to at least 6 items
             response = {
                 "task_id": task_id,
                 "query": main_query,
-                "resources_by_subtopic": web_resources_by_subtopic,
-                "url_summaries": url_summaries,  # Include all summaries
-                "total_results": len(all_results),
-                "summarized_urls": len(url_summaries),  # Add count of summarized URLs
+                "resources": all_results[:max(7, len(all_results))],  # Get at least 7 or all if less than 7
+                "url_summaries": url_summaries,  
+                "total_results": len(all_results[:max(7, len(all_results))]),
+                "summarized_urls": len(url_summaries),
                 "status": "success",
                 "processing_time": f"{time.time() - start_time:.2f} seconds"
             }
