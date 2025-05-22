@@ -3,9 +3,9 @@ import time
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 import re
 
@@ -792,8 +792,20 @@ def read_root():
     }
 
 @app.post("/api/research", response_model=None)
-async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
-    """Start a new research task and immediately return summary and subtopics."""
+async def start_research_api(request: ResearchRequest, background_tasks: BackgroundTasks):
+    """API endpoint for starting research."""
+    print("POST /api/research endpoint called")
+    return await _start_research_common(request, background_tasks)
+
+@app.post("/research", response_model=None)
+async def start_research_compat(request: ResearchRequest, background_tasks: BackgroundTasks):
+    """Compatibility endpoint for starting research without /api prefix."""
+    print("POST /research endpoint called")
+    return await _start_research_common(request, background_tasks)
+
+# Common implementation for both research endpoints
+async def _start_research_common(request: ResearchRequest, background_tasks: BackgroundTasks):
+    """Common implementation for starting research tasks."""
     # Generate unique task ID with timestamp and request hash
     unique_id = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{abs(hash(request.query + str(time.time()))) % 10000}"
     task_id = f"task_{unique_id}"
@@ -1897,3 +1909,41 @@ def sync_summarize_url(url: str):
             "error": str(e),
             "message": f"Server error: {str(e)}"
         }
+
+# Add request logging middleware to debug API calls
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming HTTP requests to help debug 404 issues."""
+    start_time = time.time()
+    path = request.url.path
+    method = request.method
+    
+    # Get client info
+    client_host = request.client.host if request.client else "unknown"
+    
+    print(f"REQUEST: {method} {path} from {client_host}")
+    print(f"Headers: {dict(request.headers)}")
+    
+    # Process the request
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        status_code = response.status_code
+        
+        # Log response info
+        print(f"RESPONSE: {status_code} for {method} {path} - took {process_time:.2f}s")
+        
+        # Add CORS headers to all responses to ensure browser compatibility
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
+    except Exception as e:
+        print(f"ERROR processing {method} {path}: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {str(e)}"}
+        )

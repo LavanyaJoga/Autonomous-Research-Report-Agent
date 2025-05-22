@@ -1,40 +1,40 @@
-# Research Report: How does solar geoengineering work
+# Research Report: how does solar geoengineering work?
 
 ## Executive Summary
 
-Summary: Solar geoengineering involves techniques designed to reflect a portion of the sun's energy back into space to reduce global temperatures. This can be achieved through methods such as stratospheric aerosol injection, which disperses particles like sulfur dioxide into the atmosphere to increase the Earth's albedo, or marine cloud brightening, which enhances the reflectivity of clouds over the ocean. These approaches aim to mitigate the effects of climate change, but they also carry potential risks and uncertainties regarding their environmental and geopolitical impacts.
+Summary: Solar geoengineering works by reflecting a small percentage of the sun's light back into space to reduce global temperatures. This can be achieved through methods such as injecting aerosols into the stratosphere or increasing the reflectivity of clouds and surfaces. These techniques aim to mimic natural processes, like volcanic eruptions, that have historically cooled the Earth.
 
-## Introduction to Solar Geoengineering: Principles and Mechanisms
+## Introduction to Solar Geoengineering: Principles and Objectives
 
-Content for Introduction to Solar Geoengineering: Principles and Mechanisms would appear here in the full implementation.
+Content for Introduction to Solar Geoengineering: Principles and Objectives would appear here in the full implementation.
 
-## Stratospheric Aerosol Injection: Techniques and Impact on Solar Radiation
+## Mechanisms of Solar Radiation Management Techniques
 
-Content for Stratospheric Aerosol Injection: Techniques and Impact on Solar Radiation would appear here in the full implementation.
+Content for Mechanisms of Solar Radiation Management Techniques would appear here in the full implementation.
 
-## Marine Cloud Brightening: Processes and Atmospheric Effects
+## Atmospheric and Environmental Processes in Solar Geoengineering
 
-Content for Marine Cloud Brightening: Processes and Atmospheric Effects would appear here in the full implementation.
+Content for Atmospheric and Environmental Processes in Solar Geoengineering would appear here in the full implementation.
 
-## Cirrus Cloud Thinning: Methods and Climate Implications
+## Technological Methods for Implementing Solar Geoengineering
 
-Content for Cirrus Cloud Thinning: Methods and Climate Implications would appear here in the full implementation.
+Content for Technological Methods for Implementing Solar Geoengineering would appear here in the full implementation.
 
-## Solar Geoengineering Technologies: Innovations and Development
+## Monitoring and Feedback Systems in Solar Geoengineering
 
-Content for Solar Geoengineering Technologies: Innovations and Development would appear here in the full implementation.
+Content for Monitoring and Feedback Systems in Solar Geoengineering would appear here in the full implementation.
 
-## Monitoring and Modeling Solar Geoengineering Outcomes
+## Potential Impacts and Effectiveness of Solar Geoengineering Strategies
 
-Content for Monitoring and Modeling Solar Geoengineering Outcomes would appear here in the full implementation.
+Content for Potential Impacts and Effectiveness of Solar Geoengineering Strategies would appear here in the full implementation.
 
 ## References
 
 ### Does solar geoengineering Resources
 
-1. [Does Solar Geoengineering - wikipedia.org](https://en.wikipedia.org/wiki/does)
-2. [Does Solar Geoengineering - wikipedia.org](https://en.wikipedia.org/wiki/Special:Search?search=does+solar+geoengineering)
-3. [Does Solar Geoengineering - docs.python.org](https://docs.python.org/3/search.html?q=does+solar+geoengineering)
+1. [Solar radiation modification - Wikipedia](https://en.wikipedia.org/wiki/Solar_radiation_modification)
+2. [1 big pro and 4 cons of solar geoengineering - Inverse](https://www.inverse.com/science/solar-geoengineering-pros-and-cons)
+3. [Solar Geoengineering To Cool the Planet: Is It Worth the Risks?](https://news.climate.columbia.edu/2024/04/24/solar-geoengineering-to-cool-the-planet-is-it-worth-the-risks/)
 
 ### Does solar geoengineering history Resources
 
@@ -42,7 +42,13 @@ Content for Monitoring and Modeling Solar Geoengineering Outcomes would appear h
 5. [Stack Overflow](https://stackoverflow.com/)
 6. [GitHub](https://github.com/)
 
+### Does solar geoengineering overview Resources
+
+7. [The inside scoop on solar geoengineering - MIT Technology Review](https://www.technologyreview.com/2023/05/04/1072603/the-inside-scoop-on-solar-geoengineering/)
+
 ### Additional Resources
 
-7. [How Does Solar Geoengineering Work - developer.mozilla.org](https://developer.mozilla.org/en-US/search?q=does+solar+geoengineering)
+8. [How Does Solar Geoengineering Work? - wikipedia.org](https://en.wikipedia.org/wiki/does)
+9. [How Does Solar Geoengineering Work? - wikipedia.org](https://en.wikipedia.org/wiki/Special:Search?search=does+solar+geoengineering)
+10. [How Does Solar Geoengineering Work? - docs.python.org](https://docs.python.org/3/search.html?q=does+solar+geoengineering)
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import SearchForm from './components/SearchForm';
-import DebugPanel from './components/DebugPanel';
 
 // Header component with ResearchGPT branding with classic styling
 const Header = ({ title }) => {
@@ -14,11 +13,6 @@ const Header = ({ title }) => {
           </svg>
           {title}
         </h1>
-        <div className="hidden md:flex space-x-4 text-sm">
-          <span className="px-3 py-1 border border-amber-400 rounded-full bg-amber-500/10 text-amber-300">
-            Classic Edition
-          </span>
-        </div>
       </div>
     </header>
   );
@@ -38,25 +32,18 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
     }
     
     setError('');
-    // Keep the query after submission instead of clearing it
     onSubmit(query);
-  };
-
-  const handleGenerateQueries = () => {
-    if (query.trim().length < 10) {
-      setError('Research prompt must be at least 10 characters long');
-      return;
-    }
-    
-    setError('');
-    // Keep the query after submission instead of clearing it
-    onGenerateQueries(query);
   };
 
   // Clear button handler
   const handleClear = () => {
     setQuery('');
     setError('');
+  };
+
+  // Handle text input changes
+  const handleQueryChange = (e) => {
+    setQuery(e.target.value);
   };
 
   return (
@@ -71,14 +58,12 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
               rows="4"
               placeholder="Enter your research topic (e.g., 'How does solar geoengineering work?')"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={handleQueryChange}
               disabled={isLoading || isGeneratingQueries}
               required
-              // Add a key to force input refresh
-              key={`research-input-${Date.now()}`}
             ></textarea>
             
-            {/* Add clear button */}
+            {/* Clear button - keep this */}
             {query && (
               <button
                 type="button"
@@ -104,29 +89,6 @@ const ResearchForm = ({ onSubmit, isLoading, onGenerateQueries, isGeneratingQuer
         )}
         
         <div className="flex flex-wrap gap-4">
-          <button
-            type="button"
-            onClick={handleGenerateQueries}
-            className={`flex items-center justify-center px-4 py-2 rounded-md font-medium text-blue-600 border border-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-              isGeneratingQueries || isLoading
-                ? 'opacity-50 cursor-not-allowed'
-                : 'transition-colors'
-            }`}
-            disabled={isGeneratingQueries || isLoading}
-          >
-            {isGeneratingQueries ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Generating...
-              </>
-            ) : (
-              'Generate Search Queries'
-            )}
-          </button>
-          
           <button
             type="submit"
             className={`flex items-center justify-center px-6 py-2 rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
@@ -945,7 +907,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <Header title="ResearchGPT" />
+      <Header title="Research-Report-Agent" />
       
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
@@ -1029,12 +991,8 @@ function App() {
       <footer className="bg-slate-900 text-white py-6 border-t border-amber-500">
         <div className="container mx-auto px-4 text-center">
           <p className="font-serif">&copy; {new Date().getFullYear()} ResearchGPT - Autonomous Research & Report Agent</p>
-          <p className="text-xs text-slate-400 mt-2 font-serif">Classic Edition</p>
         </div>
       </footer>
-      
-      {/* The DebugPanel with proper props */}
-      <DebugPanel taskId={taskId} lastResponse={lastApiResponse} />
     </div>
   );
 }
