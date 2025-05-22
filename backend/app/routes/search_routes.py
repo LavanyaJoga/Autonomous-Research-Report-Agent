@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException
+"""
+Routes for search functionality with dynamic web results.
+"""
+
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Union
 import requests
@@ -10,6 +14,7 @@ import os  # Add this import for os.getenv
 
 # Import search functionality
 from app.agents.web_search_agent import WebSearchAgent
+from app.services.search_service import SearchService
 
 # Create router
 router = APIRouter()
@@ -460,3 +465,35 @@ async def analyze_query(request: QueryAnalysisRequest):
             status_code=500, 
             detail=f"Error analyzing query: {str(e)}"
         )
+
+@router.post("/search", response_model=SearchResponse)
+async def search_service(request: SearchRequest):
+    """Search for information on a topic using real-time web results."""
+    results = await SearchService.search_query(query=request.query, min_results=request.maxResults)
+    
+    return {
+        "results": results,
+        "query": request.query,
+        "total_found": len(results)
+    }
+
+@router.get("/search", response_model=SearchResponse)
+async def search_service_get(
+    query: str = Query(..., min_length=2),
+    num_results: int = Query(10, ge=1, le=50)
+):
+    """Search endpoint for GET requests."""
+    results = await SearchService.search_query(query=query, min_results=num_results)
+    
+    return {
+        "results": results,
+        "query": query,
+        "total_found": len(results)
+    }
+
+@router.post("/enhanced-search")
+async def enhanced_search(request: SearchRequest):
+    """Get enhanced search results with categorized information."""
+    results = await SearchService.get_enhanced_search_results(query=request.query)
+    
+    return results

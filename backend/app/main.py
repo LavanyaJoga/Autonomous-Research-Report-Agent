@@ -8,6 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 import re
+from app.services.url_retriever import URLRetriever
+import asyncio
+from app.services.search_service import SearchService
 
 # Import the research agent
 try:
@@ -33,6 +36,11 @@ try:
 except Exception as e:
     print(f"Error importing IntegratedResearchAgent: {str(e)}")
     IntegratedResearchAgent = None
+
+# Import our new dynamic search service
+from app.services.dynamic_web_search import DynamicWebSearch
+from app.routes.dynamic_search_routes import router as dynamic_search_router
+from app.services.dynamic_web_search_service import EnhancedWebSearch
 
 class ResearchGPT:
     """Main class for the Autonomous Research Agent."""
@@ -755,6 +763,9 @@ from app.routes.report_routes import router as report_router
 # Include the report router in your FastAPI app
 app.include_router(report_router, prefix="/api", tags=["report"])
 
+# Include the dynamic search router
+app.include_router(dynamic_search_router, prefix="/api", tags=["search"])
+
 # Define request and response models
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=10, description="The research topic to investigate")
@@ -791,1159 +802,171 @@ def read_root():
         "recommendation": "For most use cases, start with a quick /api/search, then use /api/research for more in-depth analysis"
     }
 
-@app.post("/api/research", response_model=None)
-async def start_research_api(request: ResearchRequest, background_tasks: BackgroundTasks):
-    """API endpoint for starting research."""
-    print("POST /api/research endpoint called")
-    return await _start_research_common(request, background_tasks)
+# Add a test endpoint for dynamic web search
+@app.get("/api/test-dynamic-search")
+async def test_dynamic_search(query: str = "quantum computing", min_results: int = 7):
+    """
+    Test endpoint that demonstrates the dynamic web search functionality with diverse results.
+    """
+    try:
+        # Initialize dynamic web search
+        search_service = DynamicWebSearch()
+        
+        # Perform search
+        results = await search_service.search(query, min_results=min_results)
+        
+        # Count unique domains
+        domains = set()
+        for result in results:
+            url = result.get("url", "")
+            if url:
+                domain = search_service._get_domain(url)
+                domains.add(domain)
+        
+        # Return detailed information about the results
+        return {
+            "query": query,
+            "results_count": len(results),
+            "unique_domains": len(domains),
+            "domains_found": list(domains),
+            "results": results
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
-@app.post("/research", response_model=None)
-async def start_research_compat(request: ResearchRequest, background_tasks: BackgroundTasks):
-    """Compatibility endpoint for starting research without /api prefix."""
-    print("POST /research endpoint called")
-    return await _start_research_common(request, background_tasks)
-
-# Common implementation for both research endpoints
-async def _start_research_common(request: ResearchRequest, background_tasks: BackgroundTasks):
-    """Common implementation for starting research tasks."""
-    # Generate unique task ID with timestamp and request hash
-    unique_id = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{abs(hash(request.query + str(time.time()))) % 10000}"
-    task_id = f"task_{unique_id}"
+# Update the research endpoint to use our dynamic web search
+@app.post("/api/research")
+async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
+    """API endpoint for starting research with truly dynamic web sources."""
+    print("POST /api/research endpoint called with enhanced dynamic web search")
     
-    # Debug logging
-    print(f"Starting new research task with ID: {task_id}")
-    print(f"Query: {request.query}")
-    print(f"Timestamp: {datetime.now().isoformat()}")
-    
-    # Initialize immediate_results dict - do this first to avoid undefined variable errors
-    immediate_results = {
-        "web_resources": [],
-        "alternative_perspectives": [],
-        "subtopics": [],
-        "summary": f"Analyzing '{request.query}'...",
-        "url_summaries": {}  # Add a field for URL content summaries
-    }
-    
-    # Generate initial web resources first before any other processing
+    # Get dynamic web resources using our new search service
     web_resources = []
-    # Also collect alternative perspectives to provide a balanced view
-    alternative_perspectives = []
-    
-    if WebSearchAgent:
+    if request.query:
         try:
-            print(f"Getting initial web resources for: {request.query}")
-            web_agent = WebSearchAgent()
+            # Use our EnhancedWebSearch service for real, diverse search results
+            search_service = EnhancedWebSearch()
             
-            # Extract key terms for better search
-            try:
-                from app.routes.search_routes import extract_key_terms
-                query_terms = extract_key_terms(request.query)
-                print(f"Extracted key search terms: {query_terms}")
-            except Exception as term_error:
-                print(f"Error extracting key terms: {str(term_error)}")
-                # Simple fallback extraction
-                query_terms = [word for word in request.query.split() if len(word) > 3][:5]
+            print(f"Performing enhanced web search for query: '{request.query}'")
             
-            # First, do a targeted search with the most important terms
-            if query_terms:
-                targeted_query = " ".join(query_terms[:3])  # Use top 3 terms
-                direct_results = web_agent.search_web(targeted_query, num_results=5)
-                if direct_results and len(direct_results) > 0:
-                    print(f"Found {len(direct_results)} results with targeted terms: {targeted_query}")
-                    # Add a source for tracking
-                    for result in direct_results:
-                        result['search_method'] = 'targeted_terms'
-                    web_resources.extend(direct_results)
-            
-            # Get direct search results with the full query as a backup
-            if len(web_resources) < 5:
-                direct_results = web_agent.search_web(request.query, num_results=5)
-                if direct_results and len(direct_results) > 0:
-                    # Add source information
-                    for result in direct_results:
-                        if result not in web_resources:
-                            result['search_method'] = 'full_query'
-                            web_resources.append(result)
-                    print(f"Found {len(direct_results)} direct web resources")
-            
-            # Add initial web resources to immediate_results
-            immediate_results["web_resources"] = web_resources
-            
-            # Now fetch and summarize content from the top web resources
-            url_summaries = {}
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
-            
-            # Define a function to fetch and summarize a single URL
-            def fetch_and_summarize_url(url_info):
-                try:
-                    url = url_info["url"]
-                    title = url_info["title"]
-                    print(f"Fetching content from {url}")
-                    
-                    # Import content extraction utilities
-                    try:
-                        from langchain.document_loaders import WebBaseLoader
-                        from langchain.text_splitter import RecursiveCharacterTextSplitter
-                        from langchain.chains.summarize import load_summarize_chain
-                        from langchain.chat_models import ChatOpenAI
-                        
-                        # Load content from URL
-                        loader = WebBaseLoader(url)
-                        docs = loader.load()
-                        
-                        # Split into chunks
-                        text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=2000,
-                            chunk_overlap=100
-                        )
-                        chunks = text_splitter.split_documents(docs)
-                        
-                        # Limit to first few chunks to avoid token limits
-                        if len(chunks) > 5:
-                            chunks = chunks[:5]
-                            
-                        # Initialize LLM for summarization
-                        llm = ChatOpenAI(
-                            temperature=0, 
-                            model="gpt-4o",
-                            request_timeout=30
-                        )
-                        
-                        # Create summarization chain
-                        chain = load_summarize_chain(
-                            llm, 
-                            chain_type="map_reduce", 
-                            verbose=False
-                        )
-                        
-                        # Generate summary
-                        summary = chain.run(chunks)
-                        
-                        return {
-                            "url": url,
-                            "title": title,
-                            "summary": summary,
-                            "success": True
-                        }
-                    except Exception as e:
-                        print(f"Error using LangChain for URL {url}: {str(e)}")
-                        # Fallback to OpenAI directly
-                        try:
-                            from app.utils.content_extractor import extract_text_from_url
-                            from openai import OpenAI
-                            
-                            # Extract text content
-                            content = extract_text_from_url(url)
-                            if not content or len(content) < 50:
-                                return {
-                                    "url": url,
-                                    "title": title,
-                                    "summary": "Could not extract meaningful content from this URL.",
-                                    "success": False
-                                }
-                            
-                            # Truncate content if too long
-                            max_chars = 8000
-                            if len(content) > max_chars:
-                                content = content[:max_chars] + "..."
-                            
-                            # Use OpenAI for summarization
-                            client = OpenAI()
-                            response = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=[
-                                    {"role": "system", "content": "You are a helpful assistant that concisely summarizes web content."},
-                                    {"role": "user", "content": f"Please summarize the following content from {title} in 2-3 sentences. Focus on the main points:\n\n{content}"}
-                                ],
-                                max_tokens=200,
-                                temperature=0.3
-                            )
-                            
-                            summary = response.choices[0].message.content
-                            return {
-                                "url": url,
-                                "title": title,
-                                "summary": summary,
-                                "success": True
-                            }
-                        except Exception as inner_e:
-                            print(f"Both summarization methods failed for {url}: {str(inner_e)}")
-                            return {
-                                "url": url,
-                                "title": title,
-                                "summary": f"Could not summarize content due to: {str(inner_e)}",
-                                "success": False
-                            }
-                except Exception as e:
-                    print(f"Error processing URL {url_info.get('url')}: {str(e)}")
-                    return {
-                        "url": url_info.get("url", "unknown"),
-                        "title": url_info.get("title", "Unknown Title"),
-                        "summary": "Error fetching or processing content.",
-                        "success": False
-                    }
-            
-            # Process the top 3 URLs to get summaries
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                top_urls = web_resources[:3]
-                summary_results = list(executor.map(fetch_and_summarize_url, top_urls))
-                
-                # Add successful summaries to the result
-                for result in summary_results:
-                    if result["success"]:
-                        url_summaries[result["url"]] = {
-                            "title": result["title"],
-                            "summary": result["summary"]
-                        }
-            
-            # Add summaries to immediate_results
-            immediate_results["url_summaries"] = url_summaries
-            print(f"Added {len(url_summaries)} URL summaries to immediate results")
-            
-            # Try to extract content from high-relevance resources for better analysis
-            analyzed_resources = []
-            for resource in web_resources[:3]:  # Analyze top 3 resources
-                try:
-                    from app.routes.search_routes import extract_and_analyze_content, categorize_domain
-                    
-                    analysis = extract_and_analyze_content(resource['url'], query_terms)
-                    if analysis:
-                        domain_category = categorize_domain(resource['url'])
-                        analyzed_resources.append({
-                            'url': resource['url'],
-                            'title': resource['title'],
-                            'content_summary': analysis['summary'],
-                            'domain_category': domain_category,
-                            'relevance_score': analysis['relevance_score']
-                        })
-                except Exception as content_error:
-                    print(f"Error analyzing content: {str(content_error)}")
-            
-            # Add analyzed resources to the immediate results
-            immediate_results["analyzed_resources"] = analyzed_resources
-            
-            # Try to get alternative perspectives by adding different viewpoint terms to the query
-            alternative_queries = [
-                f"{request.query} alternative perspective",
-                f"{request.query} opposing views",
-                f"{request.query} criticism",
-                f"{request.query} different approach"
-            ]
-            
-            # Now add specific research-focused queries to get academic and scientific sources
-            research_queries = [
-                f"{request.query} research paper",
-                f"{request.query} scientific study",
-                f"{request.query} academic analysis",
-                f"{request.query} journal publication"
-            ]
-            
-            # Get academic sources for more in-depth research
-            academic_sources = []
-            for research_query in research_queries[:2]:  # Limit to 2 to avoid delays
-                try:
-                    academic_results = web_agent.search_web(research_query, num_results=2)
-                    if academic_results:
-                        # Add source information
-                        for result in academic_results:
-                            result['source_type'] = 'academic'
-                            result['query_type'] = research_query
-                        academic_sources.extend(academic_results)
-                except Exception as acad_error:
-                    print(f"Error getting academic sources: {str(acad_error)}")
-            
-            # Add academic sources to the immediate results
-            immediate_results["academic_sources"] = academic_sources
-            
-        except Exception as web_error:
-            print(f"Error getting initial web resources: {str(web_error)}")
-        
-    # Generate immediate results (summary and subtopics) using OpenAI
-    immediate_results = {
-        "web_resources": web_resources,  # Add web resources first so they're available right away
-        "alternative_perspectives": alternative_perspectives  # Add alternative perspectives
-    }
-    
-    try:
-        from openai import OpenAI
-        client = OpenAI()
-        
-        print("Generating summary and subtopics with OpenAI...")
-        
-        # Generate summary with a timeout
-        try:
-            summary_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a research assistant providing concise, factual summaries."},
-                    {"role": "user", "content": f"Provide a 2-3 sentence factual summary about '{request.query}'. Start with 'Summary: '"}
-                ],
-                temperature=0.2,
-                max_tokens=200
-            )
-            topic_summary = summary_response.choices[0].message.content.strip()
-            print("Summary generated successfully")
-            immediate_results["summary"] = topic_summary
-            
-            # Also generate an alternative perspective on the topic
-            try:
-                alternative_view = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": "You are a research assistant that provides alternative perspectives on topics."},
-                        {"role": "user", "content": f"Provide a brief alternative perspective or counterpoint on '{request.query}' that differs from the mainstream view. Be factual and balanced. Start with 'Alternative perspective: '"}
-                    ],
-                    temperature=0.7,  # Higher temperature for more diverse responses
-                    max_tokens=150
-                )
-                alternative_summary = alternative_view.choices[0].message.content.strip()
-                print("Alternative perspective generated successfully")
-                immediate_results["alternative_view"] = alternative_summary
-            except Exception as alt_view_error:
-                print(f"Error generating alternative view: {str(alt_view_error)}")
-                
-        except Exception as summary_error:
-            print(f"Error generating summary: {str(summary_error)}")
-            immediate_results["summary"] = f"Summary: {request.query} is a topic that requires comprehensive research and analysis."
-        
-        # Generate subtopics with a timeout
-        try:
-            subtopics_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "You are a research assistant creating an outline for a research report."},
-                    {"role": "user", "content": f"Generate 4-6 specific section headings for a research report on '{request.query}'. Each heading should specifically mention aspects of '{request.query}'. Return only the headings as a numbered list."}
-                ],
-                temperature=0.5,
-                max_tokens=300
+            # Get at least 7 results from diverse domains
+            dynamic_results = await search_service.search(
+                query=request.query,
+                min_results=7  # Ensure we get at least 7 results
             )
             
-            # Extract subtopics
-            subtopics_text = subtopics_response.choices[0].message.content.strip()
-            subtopics = []
-            for line in subtopics_text.split('\n'):
-                if line.strip():
-                    # Clean up the line by removing numbers and periods at the beginning
-                    clean_line = re.sub(r'^\d+\.?\s*', '', line.strip())
-                    if clean_line:
-                        subtopics.append(clean_line)
+            # Store the dynamic search results
+            web_resources = dynamic_results
             
-            print(f"Generated {len(subtopics)} subtopics successfully")
-            immediate_results["subtopics"] = subtopics
-        except Exception as subtopic_error:
-            print(f"Error generating subtopics: {str(subtopic_error)}")
-            # Fallback to generic subtopics
-            immediate_results["subtopics"] = [
-                f"Introduction to {request.query}",
-                f"Key Concepts of {request.query}",
-                f"Applications of {request.query}",
-                f"Future Developments in {request.query}"
-            ]
-        
-        print(f"Immediate results generated for task: {task_id}")
-        
-    except Exception as e:
-        print(f"ERROR generating immediate results: {str(e)}")
-        immediate_results = {
-            "summary": f"Summary: {request.query} is a topic that requires comprehensive research and analysis.",
-            "subtopics": [
-                f"Introduction to {request.query}",
-                f"Key Concepts of {request.query}",
-                f"Applications of {request.query}",
-                f"Future Developments in {request.query}"
-            ],
-            "web_resources": web_resources  # Keep the web resources we already got
-        }
-    
-    # Initialize task in storage with the immediate results
-    research_tasks[task_id] = {
-        "status": "pending",
-        "query": request.query,
-        "immediate_results": immediate_results,
-        "result": None,
-        "start_time": datetime.now().isoformat(),
-        "progress": 0,
-        "current_step": 0,
-        "message": "Task initialized",
-        "status_details": "Task queued and waiting to start"
-    }
-    
-    # Start full research in background
-    try:
-        print(f"Adding background task for task_id: {task_id}")
-        background_tasks.add_task(run_research_task, task_id, request.query)
-        print(f"Background task added successfully for task_id: {task_id}")
-    except Exception as e:
-        error_message = f"Error adding background task: {str(e)}"
-        print(error_message)
-        research_tasks[task_id]["status"] = "error"
-        research_tasks[task_id]["error"] = error_message
-    
-    # Return task ID and immediate results with web resources already included
-    return {
-        "task_id": task_id,
-        "status": "pending",
-        "message": f"Research task started for query: {request.query}",
-        "immediate_results": immediate_results
-    }
-
-@app.post("/api/clear-cache")
-async def clear_cache():
-    """Clear all caches in the application."""
-    try:
-        # Clear web results cache
-        if hasattr(app, 'web_results_cache'):
-            cache_size = len(app.web_results_cache)
-            app.web_results_cache.clear()
-            print(f"Cleared web results cache ({cache_size} entries)")
-        else:
-            print("No web results cache to clear")
-        
-        # Clear research tasks
-        if 'research_tasks' in globals():
-            task_count = len(research_tasks)
-            # Keep completed tasks but clear results to reduce memory
-            for task_id in research_tasks:
-                if research_tasks[task_id].get("status") == "completed":
-                    research_tasks[task_id]["result"] = {"cleared": True}
-                    research_tasks[task_id]["immediate_results"] = {"cleared": True}
-            print(f"Cleaned up {task_count} research tasks")
-        else:
-            print("No research tasks to clear")
+            # Log the results to verify they're real and diverse
+            print(f"Found {len(web_resources)} dynamic web resources from real search engines")
+            domains = set()
+            sources = set()
             
-        return {
-            "status": "success",
-            "message": "All caches cleared successfully"
-        }
-    except Exception as e:
-        print(f"Error clearing cache: {str(e)}")
-        return {
-            "status": "error",
-            "message": f"Error clearing cache: {str(e)}"
-        }
-
-@app.get("/api/research/{task_id}", response_model=None)
-async def get_research_result(task_id: str):
-    """Get the result of a research task."""
-    if task_id not in research_tasks:
-        raise HTTPException(status_code=404, detail=f"Research task {task_id} not found")
-    
-    try:
-        task = research_tasks[task_id]
-        
-        # Add detailed logging for debugging
-        print(f"Fetching task {task_id} with status: {task.get('status')}")
-        
-        # Ensure status field exists and has a valid value
-        if 'status' not in task or not task['status']:
-            print(f"ERROR: Task {task_id} has no valid status field. Setting to error.")
-            task['status'] = 'error'
-            task['error'] = 'Task has undefined status'
+            for i, resource in enumerate(web_resources):
+                domain = search_service._get_domain(resource.get('url', ''))
+                source = resource.get('source', 'unknown')
+                domains.add(domain)
+                sources.add(source)
+                print(f"Resource {i+1}: {resource.get('title')} - {resource.get('url')} (Domain: {domain}, Source: {source})")
             
-        # Get task status with fallback to error if it's invalid
-        status = task.get('status')
-        if status not in ['pending', 'completed', 'error']:
-            print(f"ERROR: Task {task_id} has invalid status: '{status}'. Setting to error.")
-            task['status'] = 'error'
-            task['error'] = f'Invalid status value: {status}'
-            status = 'error'
+            print(f"Total unique domains: {len(domains)}")
+            print(f"Source engines: {', '.join(sources)}")
             
-        if status == "pending":
-            response = {
-                "task_id": task_id,
-                "status": "pending",
-                "message": "Research in progress"
+            # Generate a task ID for this research request
+            import uuid
+            task_id = str(uuid.uuid4())
+            
+            # Create immediate results with the web resources
+            immediate_results = {
+                "web_resources": web_resources,
+                "query": request.query,
+                "domains": list(domains)
             }
             
-            # Add additional fields if they exist
-            for field in ["progress", "current_step", "status_details"]:
-                if field in task:
-                    response[field] = task[field]
-                    
-            print(f"Returning pending task info: progress={task.get('progress', 0)}, step={task.get('current_step', 0)}")
-            return response
-            
-        elif status == "completed":
-            # Ensure the result has all required fields
-            result = task.get("result")
-            if not result:
-                print(f"ERROR: Task {task_id} marked as completed but has no result")
-                return {
-                    "task_id": task_id,
-                    "status": "error",
-                    "message": "Task marked as completed but has no result data"
-                }
-                
-            if not isinstance(result, dict):
-                print(f"ERROR: Invalid result format: {type(result)}")
-                return {
-                    "task_id": task_id,
-                    "status": "error",
-                    "message": f"Invalid result format: {type(result)}"
-                }
-                
-            # Check for required fields
-            required_fields = ["query", "md_path", "pdf_path", "summary", "stats", "subtopics"]
-            missing_fields = [field for field in required_fields if field not in result]
-            
-            if missing_fields:
-                print(f"ERROR: Research result missing fields: {missing_fields}")
-                print(f"Available fields: {list(result.keys())}")
-                
-                # Instead of failing, try to provide a meaningful result with defaults
-                for field in missing_fields:
-                    if field == "query" and "query" in task:
-                        result["query"] = task["query"]
-                    elif field == "md_path":
-                        result["md_path"] = f"reports/{task_id}_report.md"
-                    elif field == "pdf_path":
-                        result["pdf_path"] = f"reports/{task_id}_report.pdf"
-                    elif field == "summary" and task.get("immediate_results", {}).get("summary"):
-                        result["summary"] = task["immediate_results"]["summary"]
-                    elif field == "stats":
-                        result["stats"] = "Sources: Generated with available resources"
-                    elif field == "subtopics" and task.get("immediate_results", {}).get("subtopics"):
-                        result["subtopics"] = task["immediate_results"]["subtopics"]
-                    else:
-                        # Default fallback values
-                        if field == "summary":
-                            result[field] = f"Research on {result.get('query', 'the topic')} completed successfully."
-                        elif field == "subtopics":
-                            result[field] = ["Introduction", "Key Concepts", "Applications", "Conclusion"]
-                        else:
-                            result[field] = f"Generated {field}"
-                            
-                print(f"Filled in missing fields with defaults: {missing_fields}")
-                
-            result["status"] = "completed"  # Ensure status is in the result
-            result["task_id"] = task_id     # Include task_id for reference
-            
-            print(f"Returning completed result for {task_id}")
-            return result
-            
-        else:  # error
-            error_details = {
+            # Store the task with immediate results
+            research_tasks[task_id] = {
                 "task_id": task_id,
-                "status": "error",
-                "message": f"Research task failed: {task.get('error', 'Unknown error')}",
+                "query": request.query,
+                "status": "created",
+                "status_details": "Research task created with enhanced dynamic web sources",
+                "creation_time": datetime.now().isoformat(),
+                "immediate_results": immediate_results
             }
             
-            # Add traceback if available
-            if "traceback" in task:
-                error_details["traceback"] = task["traceback"]
-                
-            # Add status details if available
-            if "status_details" in task:
-                error_details["status_details"] = task["status_details"]
+            # Start the research task in the background
+            background_tasks.add_task(run_research_task, task_id, request.query)
             
-            print(f"Returning error for task {task_id}: {error_details['message']}")
-            return error_details  # Return instead of raising exception
-            
-    except Exception as e:
-        print(f"ERROR in get_research_result: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        return {
-            "task_id": task_id,
-            "status": "error",
-            "message": f"Server error retrieving task: {str(e)}"
-        }
-
-# Add a new endpoint to check task status
-@app.get("/api/task-status/{task_id}")
-async def get_task_status(task_id: str):
-    """Get detailed status of a task."""
-    if task_id not in research_tasks:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    
-    task = research_tasks[task_id]
-    
-    # Return all task details except the actual result data to keep the response small
-    status_info = {k: v for k, v in task.items() if k != "result"}
-    
-    # Add result summary if completed
-    if task["status"] == "completed" and task.get("result"):
-        status_info["summary"] = task["result"].get("summary", "No summary available")
-    
-    return status_info
-
-@app.get("/api/download")
-async def download_file(path: str):
-    """Download a file from the server."""
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    
-    return FileResponse(
-        path=path, 
-        filename=os.path.basename(path),
-        media_type='application/octet-stream'
-    )
-
-@app.get("/api/search-queries")
-async def generate_search_queries(query: str):
-    """Generate search queries for a topic."""
-    if not query or len(query.strip()) < 5:
-        raise HTTPException(
-            status_code=400, 
-            detail="Query must be at least 5 characters long"
-        )
-    
-    try:
-        agent = ResearchAgent()
-        result = agent.generate_search_queries(query)
-        
-        # Parse the result to extract the search queries
-        queries = []
-        if isinstance(result, str):
-            lines = result.split('\n')
-            for line in lines:
-                if line.strip() and re.match(r'^\d+\.', line.strip()):
-                    query_text = re.sub(r'^\d+\.\s*', '', line.strip())
-                    queries.append(query_text)
-        
-        return {
-            "query": query, 
-            "search_queries": queries if queries else result
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating search queries: {str(e)}"
-        )
-
-# Let's add a simple test task function that will help us verify the background tasks are working
-def test_task(task_id: str):
-    """A simple test task to verify background processing."""
-    try:
-        print(f"Starting test task {task_id}")
-        research_tasks[task_id]["status_details"] = "Test task started"
-        
-        # Simulate work with a few steps
-        for i in range(1, 6):
-            print(f"Test task {task_id} - step {i}/5")
-            research_tasks[task_id]["progress"] = i / 5
-            research_tasks[task_id]["current_step"] = i
-            research_tasks[task_id]["status_details"] = f"Test step {i}/5"
-            time.sleep(2)  # Sleep for 2 seconds to simulate work
-            
-        # Mark as completed
-        print(f"Test task {task_id} completed")
-        research_tasks[task_id]["status"] = "completed"
-        research_tasks[task_id]["result"] = {
-            "query": "Test query",
-            "summary": "This was a test task that completed successfully.",
-            "stats": "Test stats",
-            "subtopics": ["Test topic 1", "Test topic 2"],
-            "md_path": "test_path.md",
-            "pdf_path": "test_path.pdf"
-        }
-        research_tasks[task_id]["completion_time"] = datetime.now().isoformat()
-        research_tasks[task_id]["status_details"] = "Test completed successfully"
-        
-    except Exception as e:
-        print(f"Test task {task_id} failed: {str(e)}")
-        research_tasks[task_id]["status"] = "error"
-        research_tasks[task_id]["error"] = f"Test failed: {str(e)}"
-
-# Add a test endpoint to verify background tasks
-@app.post("/api/test-task")
-async def start_test_task(background_tasks: BackgroundTasks):
-    """Start a test task to verify background processing."""
-    task_id = f"test_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    # Initialize task
-    research_tasks[task_id] = {
-        "status": "pending",
-        "query": "Test query",
-        "result": None,
-        "start_time": datetime.now().isoformat(),
-        "progress": 0,
-        "current_step": 0,
-        "message": "Test task initialized",
-        "status_details": "Test task queued"
-    }
-    
-    # Add the test task to the background tasks
-    background_tasks.add_task(test_task, task_id)
-    
-    return {
-        "task_id": task_id,
-        "status": "pending",
-        "message": "Test task started"
-    }
-
-# Remove the redundant integrated-research endpoint since we already have 
-# /api/research/{task_id}/web-resources that does what we need
-
-# Add a new endpoint to fetch web URLs for subtopics
-@app.get("/api/research/{task_id}/web-resources")
-async def get_web_resources(task_id: str):
-    """Fetch web URLs related to the subtopics of a research task."""
-    if task_id not in research_tasks:
-        raise HTTPException(status_code=404, detail=f"Research task {task_id} not found")
-    
-    task = research_tasks[task_id]
-    
-    # Get the subtopics and summary from the task
-    subtopics = []
-    summary = ""
-    main_query = task["query"]
-    
-    if task.get("immediate_results"):
-        if "subtopics" in task["immediate_results"]:
-            subtopics = task["immediate_results"]["subtopics"]
-        if "summary" in task["immediate_results"]:
-            summary = task["immediate_results"]["summary"]
-            
-        # Check if we already have web resources in immediate_results
-        if "web_resources" in task["immediate_results"]:
-            web_resources = task["immediate_results"]["web_resources"]
-            alternative_resources = task["immediate_results"].get("alternative_perspectives", [])
-            
-            if web_resources and len(web_resources) > 0:
-                # Modified filtering approach to ensure we get 6-7 resources
-                filtered_resources = []
-                seen_domains = set()
-                domain_counts = {}
-                
-                # Helper function to extract domain from URL
-                def get_domain(url):
-                    try:
-                        from urllib.parse import urlparse
-                        domain = urlparse(url).netloc.replace('www.', '')
-                        # Get base domain without subdomains
-                        parts = domain.split('.')
-                        if len(parts) > 2:
-                            domain = '.'.join(parts[-2:])
-                        return domain
-                    except:
-                        return url
-                
-                # First pass - include up to 2 resources from each domain to ensure diversity but get enough results
-                for resource in web_resources:
-                    domain = get_domain(resource['url'])
-                    domain_counts[domain] = domain_counts.get(domain, 0) + 1
-                    
-                    # Allow up to 2 resources per domain
-                    if domain_counts[domain] <= 2:
-                        filtered_resources.append(resource)
-                        
-                    # Stop if we have enough resources
-                    if len(filtered_resources) >= 7:
-                        break
-                
-                # If we don't have at least 6 resources, add more
-                if len(filtered_resources) < 6:
-                    for resource in web_resources:
-                        if resource not in filtered_resources:
-                            filtered_resources.append(resource)
-                        if len(filtered_resources) >= 7:
-                            break
-                
-                print(f"Filtered resources: found {len(filtered_resources)} resources from {len(domain_counts)} domains")
-                            
-                resources_by_type = {
-                    "Main Resources": filtered_resources[:7],  # Limit to 7 resources
-                }
-                
-                # Add url_summaries if they exist
-                url_summaries = task["immediate_results"].get("url_summaries", {})
-                
-                # Return these immediately instead of waiting
-                print(f"Returning filtered resources for task {task_id} ({len(filtered_resources)} unique domains)")
-                return {
-                    "task_id": task_id,
-                    "query": main_query,
-                    "resources_by_subtopic": resources_by_type,
-                    "url_summaries": url_summaries,  # Include summaries directly
-                    "total_results": len(filtered_resources),
-                    "status": "success",
-                    "message": "Research results ready"
-                }
-    
-    if task.get("result"):
-        if "subtopics" in task["result"]:
-            subtopics = task["result"]["subtopics"]
-        if "summary" in task["result"]:
-            summary = task["result"]["summary"]
-    
-    if not subtopics:
-        raise HTTPException(status_code=400, detail="No subtopics found for this research task")
-    
-    # Use a timeout mechanism to prevent endless loading
-    MAX_TIME = 25  # Maximum seconds to wait for results
-    web_results_cache_key = f"{task_id}_web_resources"
-    
-    # Check if we already have cached results for this task
-    if hasattr(app, 'web_results_cache') and web_results_cache_key in app.web_results_cache:
-        cached_result = app.web_results_cache[web_results_cache_key]
-        print(f"Returning cached web resources for task {task_id}")
-        return cached_result
-    
-    # Initialize the cache if it doesn't exist
-    if not hasattr(app, 'web_results_cache'):
-        app.web_results_cache = {}
-    
-    web_resources_by_subtopic = {}
-    all_results = []
-    url_summaries = {}  # Store URL summaries
-    start_time = time.time()
-    
-    try:
-        if WebSearchAgent:
-            # Initialize web search agent
-            web_agent = WebSearchAgent()
-            
-            # Start with general resources since they typically work better
-            try:
-                print(f"Searching for main query: {main_query}")
-                # Get more results initially to ensure diversity
-                general_results = web_agent.search_web(main_query, num_results=12)
-                
-                if general_results:
-                    # Filter to ensure each result comes from a different domain
-                    unique_domain_results = []
-                    seen_domains = set()
-                    
-                    # Helper function to extract domain from URL
-                    def get_domain(url):
-                        try:
-                            from urllib.parse import urlparse
-                            return urlparse(url).netloc.replace('www.', '')
-                        except:
-                            return url
-                    
-                    # Content relevance check for better filtering
-                    def is_relevant(resource, query):
-                        # Check if title or snippet contains main query terms
-                        query_terms = set(query.lower().split())
-                        title_text = resource.get('title', '').lower()
-                        snippet_text = resource.get('snippet', '').lower()
-                        
-                        # Count how many query terms appear
-                        title_matches = sum(1 for term in query_terms if term in title_text)
-                        snippet_matches = sum(1 for term in query_terms if term in snippet_text)
-                        
-                        # If resource has good coverage of query terms, consider it relevant
-                        return (title_matches >= 1 and snippet_matches >= 1) or snippet_matches >= 2
-                    
-                    # First prioritize resources that actually contain the query terms
-                    for resource in general_results:
-                        domain = get_domain(resource['url'])
-                        if domain not in seen_domains and is_relevant(resource, main_query):
-                            seen_domains.add(domain)
-                            unique_domain_results.append(resource)
-                            # Get 6-7 diverse and relevant resources
-                            if len(unique_domain_results) >= 7:
-                                break
-                    
-                    # If we don't have enough resources, add remaining ones with unique domains
-                    if len(unique_domain_results) < 6:
-                        for resource in general_results:
-                            domain = get_domain(resource['url'])
-                            if domain not in seen_domains:
-                                seen_domains.add(domain)
-                                unique_domain_results.append(resource)
-                                if len(unique_domain_results) >= 7:
-                                    break
-                    
-                    web_resources_by_subtopic["Main Resources"] = unique_domain_results[:7]  # Ensure we take up to 7
-                    all_results.extend([{**r, 'subtopic': "Main Resources"} for r in unique_domain_results[:7]])
-                    print(f"Found {len(unique_domain_results[:7])} resources for the main query")
-
-                    # Automatically generate summaries for the top 3 results
-                    for result in unique_domain_results[:3]:
-                        try:
-                            url_summary = await _summarize_url(result['url'])
-                            if url_summary.get("success"):
-                                url_summaries[result['url']] = {
-                                    "title": result['title'],
-                                    "summary": url_summary.get("summary", "No summary available")
-                                }
-                        except Exception as summary_err:
-                            print(f"Error summarizing URL {result['url']}: {str(summary_err)}")
-            except Exception as general_error:
-                print(f"Error getting general resources: {str(general_error)}")
-            
-            # Now get specific resources for each subtopic
-            for i, subtopic in enumerate(subtopics):
-                try:
-                    # Check if we're exceeding our time limit
-                    if time.time() - start_time > MAX_TIME:
-                        print(f"Time limit exceeded after processing {i} subtopics")
-                        break
-                    
-                    print(f"Searching for subtopic {i+1}/{len(subtopics)}: {subtopic}")
-                    
-                    # Try a regular search first, as it's more reliable
-                    search_query = f"{main_query} {subtopic}"
-                    results = web_agent.search_web(search_query, num_results=2)
-                    
-                    # If the regular search fails, try the specialized method
-                    if not results:
-                        results = web_agent.search_by_subtopic(subtopic, main_query, num_results=2)
-                    
-                    if results:
-                        # Store the results
-                        web_resources_by_subtopic[subtopic] = results
-                        all_results.extend([{**r, 'subtopic': subtopic} for r in results])
-                        print(f"Found {len(results)} resources for: {subtopic}")
-                        
-                        # Automatically generate a summary for the top result for each subtopic
-                        if results and len(results) > 0:
-                            try:
-                                top_result = results[0]
-                                url_summary = await _summarize_url(top_result['url'])
-                                if url_summary.get("success"):
-                                    url_summaries[top_result['url']] = {
-                                        "title": top_result['title'],
-                                        "summary": url_summary.get("summary", "No summary available")
-                                    }
-                            except Exception as summary_err:
-                                print(f"Error summarizing URL for subtopic {subtopic}: {str(summary_err)}")
-                    else:
-                        web_resources_by_subtopic[subtopic] = []
-                        print(f"No resources found for: {subtopic}")
-                    
-                    # Use a small delay to avoid rate limiting
-                    time.sleep(0.5)
-                    
-                except Exception as subtopic_error:
-                    print(f"Error with subtopic '{subtopic}': {str(subtopic_error)}")
-                    web_resources_by_subtopic[subtopic] = []
-                
-                # Process at most 3 subtopics to ensure the endpoint returns quickly
-                if i >= 2:
-                    print(f"Processed the first 3 subtopics, stopping to avoid long loading")
-                    break
-            
-            # If we don't have enough results, use pre-defined reliable URLs
-            if len(all_results) < 3:
-                print("Not enough results found, adding reliable resources")
-                reliable_urls = [
-                    {
-                        'title': f"{main_query} - Wikipedia",
-                        'url': f"https://en.wikipedia.org/wiki/{main_query.replace(' ', '_')}",
-                        'snippet': f"Encyclopedia article about {main_query} with comprehensive information."
-                    },
-                    {
-                        'title': f"{main_query} - Academic Research",
-                        'url': f"https://scholar.google.com/scholar?q={main_query.replace(' ', '+')}",
-                        'snippet': f"Academic papers and research about {main_query}."
-                    },
-                    {
-                        'title': f"{main_query} Latest News",
-                        'url': f"https://news.google.com/search?q={main_query.replace(' ', '+')}",
-                        'snippet': f"Recent news and developments about {main_query}."
-                    }
-                ]
-                
-                web_resources_by_subtopic["Reliable Resources"] = reliable_urls
-                all_results.extend([{**r, 'subtopic': "Reliable Resources"} for r in reliable_urls])
-                
-                # Try to get a summary for Wikipedia
-                try:
-                    wiki_url = reliable_urls[0]['url']
-                    url_summary = await _summarize_url(wiki_url)
-                    if url_summary.get("success"):
-                        url_summaries[wiki_url] = {
-                            "title": reliable_urls[0]['title'],
-                            "summary": url_summary.get("summary", "No summary available")
-                        }
-                except Exception as wiki_err:
-                    print(f"Error summarizing Wikipedia URL: {str(wiki_err)}")
-            
-            # Create the final response with flattened resources list limited to at least 6 items
-            response = {
-                "task_id": task_id,
-                "query": main_query,
-                "resources": all_results[:max(7, len(all_results))],  # Get at least 7 or all if less than 7
-                "url_summaries": url_summaries,  
-                "total_results": len(all_results[:max(7, len(all_results))]),
-                "summarized_urls": len(url_summaries),
-                "status": "success",
-                "processing_time": f"{time.time() - start_time:.2f} seconds"
-            }
-            
-            # Cache the results
-            app.web_results_cache[web_results_cache_key] = response
-            
-            return response
-                
-        else:
-            # If WebSearchAgent isn't available, return a meaningful error
-            message = "WebSearchAgent not available. Please check your installation."
-            print(message)
             return {
                 "task_id": task_id,
-                "status": "error",
-                "message": message,
-                "resources_by_subtopic": {}
+                "status": "processing",
+                "message": "Research started with enhanced dynamic web sources",
+                "immediate_results": immediate_results
             }
+                
+        except Exception as e:
+            print(f"Error getting enhanced dynamic web resources: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             
-    except Exception as e:
-        error_message = f"Error fetching web resources: {str(e)}"
-        print(error_message)
-        # Return a proper error response
+            # Return error response
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start research: {str(e)}"
+            )
+
+# Add a test endpoint for our enhanced web search
+@app.get("/api/test-enhanced-search")
+async def test_enhanced_search(query: str = "quantum computing"):
+    """Test the enhanced web search to verify we get diverse results."""
+    try:
+        # Initialize the enhanced web search
+        search_service = EnhancedWebSearch()
+        
+        print(f"Starting enhanced search for: {query}")
+        start_time = time.time()
+        
+        # Get at least 7 results with debugging info
+        results = await search_service.search(query, min_results=7)
+        
+        # Calculate search time
+        search_time = time.time() - start_time
+        
+        # Get domains for logging
+        domains = []
+        sources = []
+        for result in results:
+            domain = search_service._get_domain(result.get("url", ""))
+            source = result.get("source", "unknown")
+            domains.append(domain)
+            sources.append(source)
+            
+            # Print detailed info about this result
+            print(f"Found result: {result.get('title')} - {domain} (Source: {source})")
+        
+        # Print overall stats
+        print(f"Search completed in {search_time:.2f} seconds")
+        print(f"Found {len(results)} results from {len(set(domains))} unique domains")
+        print(f"Domains: {', '.join(domains)}")
+        print(f"Sources: {', '.join(sources)}")
+        
+        # Return detailed information
         return {
-            "task_id": task_id,
-            "status": "error",
-            "message": error_message,
+            "query": query,
+            "results_count": len(results),
+            "unique_domains": len(set(domains)),
+            "search_time_seconds": round(search_time, 2),
+            "domains": list(set(domains)),
+            "sources": list(set(sources)),
+            "results": results
+        }
+    except Exception as e:
+        import traceback
+        return {
             "error": str(e),
-            "resources_by_subtopic": {}
+            "traceback": traceback.format_exc()
         }
-
-# Keep the summarize-url endpoints for direct API calls, but make them non-async
-# for compatibility with the automatic summarization
-
-@app.post("/api/summarize-url")
-def summarize_url_post(url_data: dict):
-    """Fetch and summarize content from a URL using POST."""
-    url = url_data.get("url")
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
-    
-    return sync_summarize_url(url)
-
-@app.get("/api/summarize-url")
-def summarize_url_get(url: str):
-    """Fetch and summarize content from a URL using GET."""
-    if not url:
-        raise HTTPException(status_code=400, detail="URL parameter is required")
-    
-    return sync_summarize_url(url)
-
-async def _summarize_url(url: str):
-    """Async helper function to summarize URL content."""
-    try:
-        from app.utils.content_extractor import fetch_url_content, get_page_summary
-        
-        # Log the request for debugging
-        print(f"Summarizing URL: {url}")
-        
-        # Fetch the content with our robust fetcher
-        result = fetch_url_content(url)
-        
-        if not result["success"]:
-            print(f"Failed to fetch content from {url}: {result['error']}")
-            return {
-                "url": url,
-                "success": False,
-                "error": result["error"],
-                "message": f"Failed to fetch content: {result['error']}"
-            }
-        
-        # Generate summary if we got content
-        if result["content"]:
-            summary = get_page_summary(url, result["content"])
-            print(f"Successfully summarized {url}: {len(summary)} chars")
-            return {
-                "url": url,
-                "title": result["title"],
-                "description": result["description"],
-                "summary": summary,
-                "success": True
-            }
-        else:
-            print(f"No content extracted from {url}")
-            return {
-                "url": url,
-                "success": False,
-                "error": "No content extracted",
-                "message": "Could not extract meaningful content from the URL"
-            }
-    except Exception as e:
-        import traceback
-        print(f"Error summarizing URL {url}: {str(e)}")
-        traceback.print_exc()
-        return {
-            "url": url,
-            "success": False,
-            "error": str(e),
-            "message": f"Server error: {str(e)}"
-        }
-
-def sync_summarize_url(url: str):
-    """Synchronous version of the URL summarization function."""
-    try:
-        from app.utils.content_extractor import fetch_url_content, get_page_summary
-        
-        print(f"Summarizing URL (sync): {url}")
-        
-        # Fetch the content
-        result = fetch_url_content(url)
-        
-        if not result["success"]:
-            return {
-                "url": url,
-                "success": False,
-                "error": result["error"],
-                "message": f"Failed to fetch content: {result['error']}"
-            }
-        
-        # Generate summary if we got content
-        if result["content"]:
-            summary = get_page_summary(url, result["content"])
-            return {
-                "url": url,
-                "title": result["title"],
-                "description": result["description"],
-                "summary": summary,
-                "success": True
-            }
-        else:
-            return {
-                "url": url,
-                "success": False,
-                "error": "No content extracted",
-                "message": "Could not extract meaningful content from the URL"
-            }
-    except Exception as e:
-        import traceback
-        print(f"Error in sync summarize URL {url}: {str(e)}")
-        traceback.print_exc()
-        return {
-            "url": url,
-            "success": False,
-            "error": str(e),
-            "message": f"Server error: {str(e)}"
-        }
-
-# Add request logging middleware to debug API calls
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log all incoming HTTP requests to help debug 404 issues."""
-    start_time = time.time()
-    path = request.url.path
-    method = request.method
-    
-    # Get client info
-    client_host = request.client.host if request.client else "unknown"
-    
-    print(f"REQUEST: {method} {path} from {client_host}")
-    print(f"Headers: {dict(request.headers)}")
-    
-    # Process the request
-    try:
-        response = await call_next(request)
-        process_time = time.time() - start_time
-        status_code = response.status_code
-        
-        # Log response info
-        print(f"RESPONSE: {status_code} for {method} {path} - took {process_time:.2f}s")
-        
-        # Add CORS headers to all responses to ensure browser compatibility
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        
-        return response
-    except Exception as e:
-        print(f"ERROR processing {method} {path}: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Internal server error: {str(e)}"}
-        )

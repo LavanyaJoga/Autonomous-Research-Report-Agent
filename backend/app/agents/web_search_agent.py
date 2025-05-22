@@ -564,661 +564,182 @@ class WebSearchAgent:
         
         results = []
         
-        # Define more specific and reliable URL patterns
-        url_patterns = [
-            # Direct article URLs (more likely to be valid than search pages)
-            {"domain": "wikipedia.org", "pattern": f"https://en.wikipedia.org/wiki/{keywords[0]}"},
-            
-            # Search-based URLs for multiple keywords (use all keywords)
-            {"domain": "wikipedia.org", "pattern": f"https://en.wikipedia.org/wiki/Special:Search?search={plus_keyword}"},
-            
-            # Documentation sites - use direct search with combined keywords
-            {"domain": "docs.python.org", "pattern": f"https://docs.python.org/3/search.html?q={plus_keyword}"},
-            {"domain": "developer.mozilla.org", "pattern": f"https://developer.mozilla.org/en-US/search?q={plus_keyword}"},
-            
-            # Forums and communities
-            {"domain": "stackoverflow.com", "pattern": f"https://stackoverflow.com/search?q={plus_keyword}"},
-            {"domain": "reddit.com", "pattern": f"https://www.reddit.com/search/?q={plus_keyword}"},
-            
-            # Technical resources
-            {"domain": "github.com", "pattern": f"https://github.com/search?q={plus_keyword}"},
-            {"domain": "gitlab.com", "pattern": f"https://gitlab.com/search?search={plus_keyword}"},
-            
-            # Educational sites
-            {"domain": "w3schools.com", "pattern": f"https://www.w3schools.com/search/search.php?q={plus_keyword}"},
-            {"domain": "tutorialspoint.com", "pattern": f"https://www.tutorialspoint.com/search.htm?search={plus_keyword}"},
-            {"domain": "geeksforgeeks.org", "pattern": f"https://www.geeksforgeeks.org/search/{plus_keyword}"},
-            
-            # News and articles
-            {"domain": "medium.com", "pattern": f"https://medium.com/search?q={plus_keyword}"},
-            {"domain": "dev.to", "pattern": f"https://dev.to/search?q={plus_keyword}"},
-            
-            # Academic sources
-            {"domain": "scholar.google.com", "pattern": f"https://scholar.google.com/scholar?q={plus_keyword}"},
-            {"domain": "jstor.org", "pattern": f"https://www.jstor.org/action/doBasicSearch?Query={plus_keyword}"},
-            
-            # News sources - good for historical events like wars
-            {"domain": "nytimes.com", "pattern": f"https://www.nytimes.com/search?query={plus_keyword}"},
-            {"domain": "bbc.com", "pattern": f"https://www.bbc.co.uk/search?q={plus_keyword}"},
-            {"domain": "aljazeera.com", "pattern": f"https://www.aljazeera.com/search/{plus_keyword}"},
-            
-            # Historical resources - especially useful for war-related queries
-            {"domain": "britannica.com", "pattern": f"https://www.britannica.com/search?query={plus_keyword}"},
-            {"domain": "history.com", "pattern": f"https://www.history.com/search?q={plus_keyword}"},
-        ]
+        # Use real search engine APIs instead of static patterns
+        try:
+            # Try Google search through a scraper (no API key required)
+            google_results = self._google_scrape_search(clean_query, 5)
+            if google_results:
+                results.extend(google_results)
+                print(f"Added {len(google_results)} results from Google scraping")
+        except Exception as e:
+            print(f"Google scrape search failed: {str(e)}")
         
-        # Generate URLs for the combined keywords
-        for pattern_info in url_patterns:
-            domain = pattern_info["domain"]
-            pattern = pattern_info["pattern"]
+        # If we don't have enough results, try Bing
+        if len(results) < num_results:
+            try:
+                bing_results = self._bing_search(clean_query, num_results - len(results))
+                if bing_results:
+                    results.extend(bing_results)
+                    print(f"Added {len(bing_results)} results from Bing")
+            except Exception as e:
+                print(f"Bing search failed: {str(e)}")
+        
+        # If we still don't have enough, try DuckDuckGo
+        if len(results) < num_results:
+            try:
+                ddg_results = self._simple_duckduckgo_search(clean_query, num_results - len(results))
+                if ddg_results:
+                    results.extend(ddg_results)
+                    print(f"Added {len(ddg_results)} results from DuckDuckGo")
+            except Exception as e:
+                print(f"DuckDuckGo search failed: {str(e)}")
+        
+        # If we still don't have enough, add some carefully selected dynamic sources
+        if len(results) < num_results:
+            # Use domain-specific search URLs that are likely to work
+            domain_search_patterns = [
+                # Academic sources
+                {"domain": "scholar.google.com", "pattern": f"https://scholar.google.com/scholar?q={plus_keyword}"},
+                
+                # Documentation and reliable sources
+                {"domain": "wikipedia.org", "pattern": f"https://en.wikipedia.org/wiki/Special:Search?search={plus_keyword}"},
+                {"domain": "britannica.com", "pattern": f"https://www.britannica.com/search?query={plus_keyword}"},
+                
+                # News sources with reliable search functionality
+                {"domain": "nytimes.com", "pattern": f"https://www.nytimes.com/search?query={plus_keyword}"},
+                {"domain": "bbc.com", "pattern": f"https://www.bbc.co.uk/search?q={plus_keyword}"},
+                
+                # Technical resources
+                {"domain": "github.com", "pattern": f"https://github.com/search?q={plus_keyword}"},
+                {"domain": "stackoverflow.com", "pattern": f"https://stackoverflow.com/search?q={plus_keyword}"},
+            ]
             
-            title = f"{query.title()} - {domain}"
-            snippet = f"Information about {query} on {domain}."
-            
-            results.append({
-                'title': title,
-                'url': pattern,
-                'snippet': snippet
-            })
-            
-            # Break if we have enough results
-            if len(results) >= num_results:
-                break
+            # Add dynamic sources
+            for pattern_info in domain_search_patterns:
+                domain = pattern_info["domain"]
+                pattern = pattern_info["pattern"]
+                
+                title = f"{query.title()} - {domain}"
+                snippet = f"Information about {query} on {domain}."
+                
+                results.append({
+                    'title': title,
+                    'url': pattern,
+                    'snippet': snippet
+                })
+                
+                # Break if we have enough results
+                if len(results) >= num_results:
+                    break
         
         # Return only the number of results requested
         return results[:num_results]
-
-    def get_urls_from_text(self, text: str, num_results: int = 8) -> List[Dict[str, str]]:
+    
+    def _google_scrape_search(self, query: str, num_results: int = 5) -> List[Dict[str, str]]:
         """
-        Generate reliable URLs directly from text content using a proper search engine.
-        
-        Args:
-            text: The text to search for (like subtopics or summary)
-            num_results: Number of results to return
-            
-        Returns:
-            List of dictionaries with 'title', 'url', and 'snippet'
+        Scrape Google search results without using an API.
+        This method is more dynamic but may be less reliable than API-based methods.
         """
-        print(f"Finding web resources for: {text}")
-        
-        # Try different search methods in order of preference
-        search_methods = [
-            self._search_with_langchain,
-            self._search_with_serper,
-            self._search_with_serpapi,
-            self._search_with_duckduckgo,
-            self._search_with_fallback
-        ]
-        
-        # First try to do a proper web search with the text
-        for method in search_methods:
-            try:
-                results = method(text, num_results)
-                if results:
-                    # Verify URLs are valid
-                    valid_results = self._validate_urls(results)
-                    if valid_results:
-                        return valid_results[:num_results]
-            except Exception as e:
-                print(f"Search method failed: {str(e)}")
-                continue
-        
-        # If all methods fail, return a curated list based on the text keywords
-        return self._generate_topical_urls(text, num_results)
-    
-    def _search_with_langchain(self, query: str, num_results: int) -> List[Dict[str, str]]:
-        """Search using LangChain tools."""
         try:
-            from langchain.utilities import GoogleSearchAPIWrapper
-            from langchain.tools import Tool
+            # Encode the query for URL
+            encoded_query = quote_plus(query)
             
-            print("Using LangChain GoogleSearchAPIWrapper")
-            search = GoogleSearchAPIWrapper()
-            
-            # Create a search tool
-            search_tool = Tool(
-                name="Google Search",
-                description="Search Google for recent results.",
-                func=search.run
-            )
-            
-            # Run the search
-            search_results = search_tool.run(query)
-            
-            # Parse the results to get URLs
-            results = []
-            if isinstance(search_results, str):
-                # Extract URLs from the text if it's a string
-                lines = search_results.split('\n')
-                for line in lines[:num_results + 5]:
-                    # Look for URLs in the text
-                    url_match = re.search(r'https?://[^\s]+', line)
-                    if url_match:
-                        url = url_match.group(0)
-                        title = line[:url_match.start()].strip() or f"Result for {query}"
-                        snippet = line[url_match.end():].strip() or f"Found from search for {query}"
-                        
-                        results.append({
-                            'title': title,
-                            'url': url,
-                            'snippet': snippet
-                        })
-            elif isinstance(search_results, list):
-                # If it's already a list of items
-                for item in search_results[:num_results + 5]:
-                    if isinstance(item, dict):
-                        # Try to extract URL, title and snippet
-                        url = item.get('link') or item.get('url')
-                        title = item.get('title') or f"Result for {query}"
-                        snippet = item.get('snippet') or item.get('description') or f"Found from search for {query}"
-                        
-                        if url:
-                            results.append({
-                                'title': title,
-                                'url': url,
-                                'snippet': snippet
-                            })
-            
-            return results
-            
-        except Exception as e:
-            print(f"LangChain search failed: {str(e)}")
-            raise e
-    
-    def _search_with_duckduckgo(self, query: str, num_results: int) -> List[Dict[str, str]]:
-        """Search using DuckDuckGo."""
-        try:
-            # Try to import DuckDuckGo Search
-            try:
-                from duckduckgo_search import DDGS
-            except ImportError:
-                # If import fails, try to install the package
-                import subprocess
-                import sys
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "duckduckgo-search"])
-                from duckduckgo_search import DDGS
-            
-            # Create search instance
-            ddgs = DDGS()
-            
-            # Perform the search
-            results = []
-            ddg_results = list(ddgs.text(query, max_results=num_results))
-            
-            for r in ddg_results:
-                results.append({
-                    'title': r.get('title', ''),
-                    'url': r.get('href', ''),
-                    'snippet': r.get('body', '')
-                })
-            
-            return results
-            
-        except Exception as e:
-            print(f"DuckDuckGo search failed: {str(e)}")
-            raise e
-
-    def _score_results_for_subtopic(self, results: List[Dict[str, str]], subtopic: str) -> List[Dict[str, str]]:
-        """Score search results for relevance to a specific subtopic."""
-        scored_results = []
-        
-        # Extract key terms from the subtopic
-        subtopic_terms = self._extract_key_terms(subtopic)
-        
-        for result in results:
-            # Calculate relevance score
-            relevance = self._calculate_content_relevance(result, subtopic)
-            
-            # Add the score to the result
-            result_copy = result.copy()
-            result_copy['relevance_score'] = relevance
-            result_copy['subtopic'] = subtopic
-            
-            scored_results.append(result_copy)
-        
-        # Sort by relevance
-        scored_results.sort(key=lambda x: x['relevance_score'], reverse=True)
-        return scored_results
-    
-    def _calculate_content_relevance(self, result: Dict[str, str], subtopic: str) -> float:
-        """Calculate how relevant a search result is to a specific subtopic."""
-        title = result.get('title', '').lower()
-        snippet = result.get('snippet', '').lower()
-        url = result.get('url', '').lower()
-        
-        # Clean the subtopic
-        clean_subtopic = subtopic.lower()
-        
-        # Extract key terms from subtopic
-        subtopic_words = clean_subtopic.split()
-        
-        # Base score
-        score = 0.0
-        
-        # Check for exact matches (highest value)
-        if clean_subtopic in title:
-            score += 5.0
-        elif clean_subtopic in snippet:
-            score += 3.0
-            
-        # Check for partial matches
-        title_match_count = sum(1 for word in subtopic_words if word in title)
-        snippet_match_count = sum(1 for word in subtopic_words if word in snippet)
-        
-        # Add scores based on match percentage
-        if len(subtopic_words) > 0:
-            title_match_ratio = title_match_count / len(subtopic_words)
-            snippet_match_ratio = snippet_match_count / len(subtopic_words)
-            
-            score += title_match_ratio * 3.0
-            score += snippet_match_ratio * 2.0
-        
-        # Check URL for relevance
-        if any(word in url for word in subtopic_words if len(word) > 3):
-            score += 1.0
-        
-        # Check for domain quality
-        domain = self._extract_domain(url)
-        domain_score = self._score_domain_quality(domain)
-        
-        # Add weighted domain score (multiply by 0.2 to keep it proportional)
-        score += domain_score * 0.2
-        
-        return score
-    
-    def _extract_key_terms(self, text: str) -> List[str]:
-        """Extract key terms from text."""
-        # Remove punctuation and lowercase
-        clean_text = re.sub(r'[^\w\s]', '', text.lower())
-        
-        # Remove stopwords
-        stopwords = ['a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'of']
-        words = clean_text.split()
-        key_terms = [word for word in words if word not in stopwords and len(word) > 2]
-        
-        return key_terms
-    
-    def _extract_domain(self, url: str) -> str:
-        """Extract domain from URL."""
-        try:
-            parsed_url = urlparse(url)
-            domain = parsed_url.netloc
-            return domain
-        except:
-            return ""
-    
-    def _score_domain_quality(self, domain: str) -> float:
-        """Score domain quality based on known reliable domains."""
-        # Higher quality domains
-        high_quality = [
-            'wikipedia.org', 'github.com', 'stackoverflow.com', 
-            'arxiv.org', 'ieee.org', 'acm.org', 'springer.com',
-            'nytimes.com', 'bbc.com', 'cnn.com', 'reuters.com',
-            'harvard.edu', 'stanford.edu', 'mit.edu', '.edu',
-            'docs.python.org', 'developer.mozilla.org'
-        ]
-        
-        # Medium quality domains
-        medium_quality = [
-            'medium.com', 'towardsdatascience.com', 'blog.google',
-            'dev.to', 'freecodecamp.org', 'w3schools.com',
-            'tutorialspoint.com', 'geeksforgeeks.org', 'hackernoon.com'
-        ]
-        
-        # Check for high quality domains (score 9-10)
-        for hq_domain in high_quality:
-            if hq_domain in domain:
-                base_score = 9.0
-                # Even higher score for educational domains
-                if '.edu' in domain or 'wikipedia.org' in domain:
-                    base_score = 10.0
-                return base_score
-        
-        # Check for medium quality domains (score 7-8)
-        for mq_domain in medium_quality:
-            if mq_domain in domain:
-                return 7.0
-        
-        # Default score for unknown domains
-        return 5.0
-    
-    def _search_with_duckduckgo(self, query: str, num_results: int) -> List[Dict[str, str]]:
-        """Search using DuckDuckGo."""
-        try:
-            # Try to import DuckDuckGo Search
-            try:
-                from duckduckgo_search import DDGS
-            except ImportError:
-                # If import fails, try to install the package
-                import subprocess
-                import sys
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "duckduckgo-search"])
-                from duckduckgo_search import DDGS
-            
-            # Create search instance
-            ddgs = DDGS()
-            
-            # Perform the search
-            results = []
-            ddg_results = list(ddgs.text(query, max_results=num_results))
-            
-            for r in ddg_results:
-                results.append({
-                    'title': r.get('title', ''),
-                    'url': r.get('href', ''),
-                    'snippet': r.get('body', '')
-                })
-            
-            return results
-            
-        except Exception as e:
-            print(f"DuckDuckGo search failed: {str(e)}")
-            raise e
-
-    def _generate_search_queries(self, topic: str) -> List[str]:
-        """Generate multiple search queries from a single topic."""
-        # Clean the topic
-        clean_topic = re.sub(r'[?!.,;:]', '', topic.lower())
-        
-        # Remove common stopwords
-        stopwords = ['what', 'is', 'are', 'how', 'to', 'the', 'a', 'an', 'in', 'on', 'of', 'for', 'tell', 'me', 'about']
-        words = clean_topic.split()
-        
-        # Extract significant words (length > 2 and not stopwords)
-        keywords = [word for word in words if word not in stopwords and len(word) > 2]
-        
-        # Keep important connecting words like "and" between entities
-        for i, word in enumerate(words):
-            if word == 'and' and i > 0 and i < len(words) - 1:
-                if words[i-1] not in keywords and words[i-1] not in stopwords:
-                    keywords.append(words[i-1])
-                if words[i+1] not in keywords and words[i+1] not in stopwords:
-                    keywords.append(words[i+1])
-                keywords.append('and')
-        
-        # If we don't have good keywords, use the longest words
-        if not keywords and words:
-            words_by_length = sorted(words, key=len, reverse=True)
-            keywords = words_by_length[:3]
-        
-        # For specific topics like wars, ensure we capture both sides
-        if 'war' in words or 'conflict' in words:
-            important_entities = ['india', 'pakistan', 'china', 'russia', 'ukraine', 'usa', 'japan', 
-                                'korea', 'vietnam', 'iraq', 'iran', 'afghanistan', 'israel', 'palestine']
-            
-            found_entities = [entity for entity in important_entities if entity in words]
-            if len(found_entities) >= 2:
-                # Create a specific war query
-                war_query = " ".join(found_entities) + " war"
-                
-        # Main search terms
-        main_terms = " ".join(keywords[:3]) if keywords else topic
-        if len(keywords) > 3:
-            secondary_terms = " ".join(keywords[3:])
-        else:
-            secondary_terms = main_terms
-        
-        # Generate different types of queries
-        queries = [
-            main_terms,  # Direct terms
-            f"{main_terms} history",  # Historical perspective
-            f"{main_terms} overview",  # Overview
-            f"{main_terms} explained",  # Explanation
-            f"{main_terms} analysis",  # Analysis
-            f"{secondary_terms} consequences",  # Consequences
-            f"{main_terms} timeline",  # Timeline/chronology
-            f"{main_terms} key events"  # Key events
-        ]
-        
-        # Add topic-specific queries for wars/conflicts
-        if 'war' in words or 'conflict' in words:
-            war_queries = [
-                f"{main_terms} battles",
-                f"{main_terms} peace treaty",
-                f"{main_terms} casualties",
-                f"{main_terms} causes"
+            # Randomize user agent to avoid being blocked
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
             ]
-            queries.extend(war_queries)
-        
-        # Eliminate duplicates while preserving order
-        unique_queries = []
-        for query in queries:
-            if query not in unique_queries:
-                unique_queries.append(query)
-        
-        return unique_queries
-    
-    def _filter_query(self, query: str) -> str:
-        """
-        Filter and clean the query for better search results.
-        
-        Args:
-            query: The original query
             
-        Returns:
-            Cleaned and filtered query
-        """
-        # Remove any question marks, exclamation points, unnecessary punctuation
-        query = re.sub(r'[?!.,;:]', '', query)
-        
-        # Special handling for "tell about" or similar prefixes
-        query = re.sub(r'^(tell|tell me|tell us|talk|talk about|explain|explain about)\s+about\s+', '', query.lower())
-        query = re.sub(r'^(tell|tell me|tell us|talk|talk about|explain|explain about)\s+', '', query.lower())
-        
-        # Keep "and" for war/conflict queries to preserve relationship between entities
-        if any(term in query.lower() for term in ['war', 'conflict', 'battle', 'dispute', 'fight', 'operation']):
-            # Don't strip "and" from war/conflict queries
-            modified_words = query.lower().split()
+            # Try different country codes to get diverse results
+            country_codes = ['com', 'co.uk', 'ca', 'com.au', 'co.in']
             
-            # Build the modified query keeping important connecting words
-            filtered_words = []
-            for i, word in enumerate(modified_words):
-                # Keep countries, important entities and connecting words for war-related topics
-                if (word in ['and', 'between', 'against', 'with']) or len(word) > 3:
-                    filtered_words.append(word)
-                    
-            # Use this carefully filtered version  
-            return ' '.join(filtered_words)
-        
-        # Normal processing for non-war queries
-        # Remove common filler words to focus on key terms
-        stopwords = ['what', 'is', 'are', 'how', 'to', 'the', 'a', 'an', 'in', 'on', 'of', 'for', 'can', 'could', 'would', 'should', 'or', 'but']
-        
-        # Split into words
-        words = query.lower().split()
-        # Filter out stopwords and short words
-        keywords = [word for word in words if word not in stopwords and len(word) > 2]
-        
-        # If the filtered query is too short, keep more of the original words
-        if len(keywords) < 2 and len(words) >= 2:
-            # First try keeping 'and' to preserve relationships between terms
-            if 'and' in words:
-                # Keep words that are connected by 'and'
-                and_index = words.index('and')
-                if and_index > 0 and and_index < len(words) - 1:
-                    keywords = words[and_index-1:and_index+2]  # Take the words around 'and'
-            else:
-                # Just use more of the original words
-                keywords = words
-        
-        # Keep at least 3-4 words for complex topics
-        if len(words) > 4 and len(keywords) < 3:
-            keywords = words[:4]  # Keep first 4 words of original query
-        
-        # Reconstruct the query with key terms
-        filtered_query = ' '.join(keywords)
-        
-        # For specific topics like wars or conflicts, ensure both entity names are included
-        if ('war' in query.lower() or 'conflict' in query.lower() or 'dispute' in query.lower() or 'operation' in query.lower()):
-            # Make sure we don't lose important country or entity names
-            important_entities = ['india', 'pakistan', 'pakisthan', 'china', 'russia', 'ukraine', 'us', 'usa', 
-                                'america', 'japan', 'korea', 'vietnam', 'iraq', 'iran', 'afghanistan',
-                                'israel', 'palestine', 'world', 'sindoor', 'operation']
-            
-            # Add back any important entities that were filtered out
-            for entity in important_entities:
-                if entity in query.lower() and entity not in filtered_query:
-                    filtered_query += f" {entity}"
-        
-        # If nothing specific was identified but the query is short
-        if len(filtered_query) < 10:
-            return query  # Use original query
-            
-        return filtered_query
-
-    def _search_with_serper(self, query: str, num_results: int = 8) -> List[Dict[str, str]]:
-        """
-        Search the web using Serper.dev API.
-        
-        Args:
-            query: The search query
-            num_results: Number of results to return
-            
-        Returns:
-            List of dictionaries with 'title', 'url', and 'snippet'
-        """
-        try:
-            # Check if API key is available
-            api_key = self.api_key or os.getenv("SERPER_API_KEY")
-            if not api_key:
-                raise ValueError("Serper API key not found")
-                
-            # Set up the API request
-            url = "https://google.serper.dev/search"
-            headers = {
-                "X-API-KEY": api_key,
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "q": query,
-                "num": min(num_results * 2, 20)  # Request more results than needed to filter later
-            }
-            
-            # Make the request
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Parse the results
             results = []
-            if "organic" in data:
-                for item in data["organic"]:
-                    title = item.get("title", "")
-                    link = item.get("link", "")
-                    snippet = item.get("snippet", "")
+            
+            # Try a few different Google domains
+            for i, cc in enumerate(country_codes):
+                if len(results) >= num_results:
+                    break
                     
-                    results.append({
-                        "title": title,
-                        "url": link,
-                        "snippet": snippet,
-                        "source": "serper"
-                    })
+                # Only try 2 country codes maximum to avoid excessive requests
+                if i >= 2:
+                    break
+                
+                try:
+                    url = f"https://www.google.{cc}/search?q={encoded_query}&num=10"
                     
-                    if len(results) >= num_results:
-                        break
+                    headers = {
+                        'User-Agent': random.choice(user_agents),
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Referer': 'https://www.google.com/',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1'
+                    }
+                    
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    # Check if we got a valid response
+                    if response.status_code == 200:
+                        # Parse the HTML response
+                        soup = BeautifulSoup(response.text, 'html.parser')
                         
+                        # Extract search results - look for the main search result divs
+                        for result_div in soup.find_all('div', class_=['g', 'tF2Cxc']):
+                            try:
+                                # Extract title and link
+                                title_elem = result_div.find('h3')
+                                if not title_elem:
+                                    continue
+                                    
+                                title = title_elem.get_text()
+                                
+                                # Extract URL - it's typically in an <a> tag within the h3's parent
+                                link_elem = title_elem.find_parent('a')
+                                if not link_elem:
+                                    # Try to find the link elsewhere
+                                    link_elem = result_div.find('a')
+                                
+                                if not link_elem:
+                                    continue
+                                    
+                                link = link_elem.get('href', '')
+                                
+                                # Google search results often have internal links
+                                if link.startswith('/url?q='):
+                                    # Extract the actual URL from Google's redirect
+                                    link = link.split('/url?q=')[1].split('&')[0]
+                                
+                                # Find the snippet text
+                                snippet_elem = result_div.find('div', class_=['VwiC3b', 'yXK7lf', 'MUxGbd', 'yDYNvb', 'lyLwlc'])
+                                snippet = snippet_elem.get_text() if snippet_elem else ""
+                                
+                                # Add to results if we have a valid URL
+                                if link.startswith('http'):
+                                    results.append({
+                                        'title': title,
+                                        'url': link,
+                                        'snippet': snippet,
+                                        'source': f'google-{cc}'
+                                    })
+                                    
+                                    if len(results) >= num_results:
+                                        break
+                            except Exception as e:
+                                # Skip this result if there's an error
+                                continue
+                except Exception as e:
+                    print(f"Error with Google {cc}: {str(e)}")
+                    continue
+                    
+                # Add a delay between requests to different domains
+                time.sleep(1)
+            
             return results
             
         except Exception as e:
-            print(f"Serper search error: {str(e)}")
-            raise e
+            print(f"Google scrape search error: {str(e)}")
+            return []
 
-    def _search_with_serpapi(self, query: str, num_results: int = 8) -> List[Dict[str, str]]:
-        """
-        Search the web using SerpAPI.
-        
-        Args:
-            query: The search query
-            num_results: Number of results to return
-            
-        Returns:
-            List of dictionaries with 'title', 'url', and 'snippet'
-        """
-        try:
-            # Check if API key is available
-            api_key = self.api_key or os.getenv("SERPAPI_KEY")
-            if not api_key:
-                raise ValueError("SerpAPI key not found")
-                
-            # Set up the API request
-            url = "https://serpapi.com/search"
-            params = {
-                "q": query,
-                "api_key": api_key,
-                "engine": "google",
-                "num": min(num_results * 2, 20),  # Request more results to filter later
-                "gl": "us",  # geolocation - use US results
-                "hl": "en"   # language - use English
-            }
-            
-            # Make the request
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Parse the results
-            results = []
-            if "organic_results" in data:
-                for item in data["organic_results"]:
-                    title = item.get("title", "")
-                    link = item.get("link", "")
-                    snippet = item.get("snippet", "")
-                    
-                    results.append({
-                        "title": title,
-                        "url": link,
-                        "snippet": snippet,
-                        "source": "serpapi"
-                    })
-                    
-                    if len(results) >= num_results:
-                        break
-                        
-            return results
-            
-        except Exception as e:
-            print(f"SerpAPI search error: {str(e)}")
-            raise e
-
-    def _search_with_fallback(self, query: str, num_results: int = 8) -> List[Dict[str, str]]:
-        """
-        Fallback search method using free alternatives.
-        
-        Args:
-            query: The search query
-            num_results: Number of results to return
-            
-        Returns:
-            List of dictionaries with 'title', 'url', and 'snippet'
-        """
-        # Try different methods in order
-        try:
-            # First try DuckDuckGo
-            results = self._simple_duckduckgo_search(query, num_results * 2)
-            if results and len(results) >= 3:  # At least 3 results
-                return results[:num_results]
-        except Exception as e:
-            print(f"DuckDuckGo search failed: {str(e)}")
-        
-        try:
-            # Then try Brave
-            results = self._brave_search(query, num_results * 2)
-            if results and len(results) >= 3:
-                return results[:num_results]
-        except Exception as e:
-            print(f"Brave search failed: {str(e)}")
-        
-        try:
-            # Then try Bing
-            results = self._bing_search(query, num_results * 2)
-            if results and len(results) >= 3:
-                return results[:num_results]
-        except Exception as e:
-            print(f"Bing search failed: {str(e)}")
-        
-        # If all else fails, generate topic-specific URLs
-        return self._generate_topical_urls(query, num_results)
-
-    def _simple_serpapi_search(self, query: str, num_results: int = 5) -> List[Dict[str, str]]:
-        """Simpler wrapper around SerpAPI."""
-        return self._search_with_serpapi(query, num_results)
+# ...existing code...
