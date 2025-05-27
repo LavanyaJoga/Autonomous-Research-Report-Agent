@@ -354,53 +354,56 @@ const WebResources = ({ taskId, isLoading, onResourcesLoaded }) => {
       });
     });
 
+
+      // Function to fetch summary for a URL
+      const fetchUrlSummary = async (url) => {
+          // Skip if already fetching or if we already have the summary
+          if (summaryLoadingStates[url] || urlSummaries[url]) return;
+
+          // Mark as loading
+          setSummaryLoadingStates(prev => ({
+              ...prev,
+              [url]: true
+          }));
+
+          try {
+              const encodedUrl = encodeURIComponent(url);
+              const response = await fetch(`http://localhost:8000/api/summarize-url?url=${encodedUrl}`);
+
+              if (!response.ok) {
+                  throw new Error(`Server returned ${response.status}`);
+              }
+
+              const data = await response.json();
+
+              // Update the URL summaries
+              setUrlSummaries(prev => ({
+                  ...prev,
+                  [url]: data.summary || "No summary available."
+              }));
+          } catch (err) {
+              console.error("Error fetching URL summary:", err);
+              setUrlSummaries(prev => ({
+                  ...prev,
+                  [url]: `Failed to fetch summary: ${err.message}`
+              }));
+          } finally {
+              setSummaryLoadingStates(prev => ({
+                  ...prev,
+                  [url]: false
+              }));
+          }
+      };
+
+
     // Fetch summaries for up to 3 URLs at a time to avoid overwhelming the server
     const fetchBatch = urlsToFetch.slice(0, 3);
     
     if (fetchBatch.length > 0) {
       fetchBatch.forEach(url => fetchUrlSummary(url));
     }
-  }, [webResources, urlSummaries, summaryLoadingStates, fetchUrlSummary]);
+  }, [webResources, urlSummaries, summaryLoadingStates]);
 
-  // Function to fetch summary for a URL
-  const fetchUrlSummary = async (url) => {
-    // Skip if already fetching or if we already have the summary
-    if (summaryLoadingStates[url] || urlSummaries[url]) return;
-    
-    // Mark as loading
-    setSummaryLoadingStates(prev => ({
-      ...prev,
-      [url]: true
-    }));
-    
-    try {
-      const encodedUrl = encodeURIComponent(url);
-      const response = await fetch(`http://localhost:8000/api/summarize-url?url=${encodedUrl}`);
-      
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      // Update the URL summaries
-      setUrlSummaries(prev => ({
-        ...prev,
-        [url]: data.summary || "No summary available."
-      }));
-    } catch (err) {
-      console.error("Error fetching URL summary:", err);
-      setUrlSummaries(prev => ({
-        ...prev,
-        [url]: `Failed to fetch summary: ${err.message}`
-      }));
-    } finally {
-      setSummaryLoadingStates(prev => ({
-        ...prev,
-        [url]: false
-      }));
-    }
-  };
 
   // Call the onResourcesLoaded prop when resources are loaded - with debouncing
   useEffect(() => {
