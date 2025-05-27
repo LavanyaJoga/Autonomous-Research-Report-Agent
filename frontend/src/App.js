@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
-import SearchForm from './components/SearchForm';
 
 // Header component with ResearchGPT branding with classic styling
 const Header = ({ title }) => {
@@ -361,7 +360,7 @@ const WebResources = ({ taskId, isLoading, onResourcesLoaded }) => {
     if (fetchBatch.length > 0) {
       fetchBatch.forEach(url => fetchUrlSummary(url));
     }
-  }, [webResources, urlSummaries, summaryLoadingStates]);
+  }, [webResources, urlSummaries, summaryLoadingStates, fetchUrlSummary]);
 
   // Function to fetch summary for a URL
   const fetchUrlSummary = async (url) => {
@@ -518,58 +517,6 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   
-  const generateReport = async () => {
-    setIsGenerating(true);
-    
-    try {
-      // Collect all available summaries
-      let allSummaries = {};
-      
-      // Add summaries from web resources
-      if (urlSummaries) {
-        Object.entries(urlSummaries).forEach(([url, summaryInfo]) => {
-          const summary = typeof summaryInfo === 'string' ? summaryInfo : summaryInfo.summary || '';
-          const hostname = new URL(url).hostname;
-          allSummaries[hostname] = summary;
-        });
-      }
-      
-      // Prepare input for report generation
-      const reportInput = {
-        topic: research.query,
-        mainSummary: research.summary,
-        sources: Object.entries(allSummaries).map(([source, summary]) => ({
-          source,
-          summary
-        })),
-        subtopics: research.subtopics || []
-      };
-      
-      // Generate the report using the OpenAI API
-      const response = await fetch('http://localhost:8000/api/generate-report', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(reportInput)
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-      
-      const data = await response.json();
-      setReport(data.report || "No report content was generated.");
-      setGenerationComplete(true);
-    } catch (error) {
-      console.error("Error generating report:", error);
-      setReport(`Failed to generate comprehensive report: ${error.message}`);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-  
-  // Generate a simple report if OpenAI API call is not possible
   const generateSimpleReport = () => {
     setIsGenerating(true);
     
@@ -700,8 +647,6 @@ function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [researchResults, setResearchResults] = useState(null);
   const [searchQueries, setSearchQueries] = useState(null);
-  const [progress, setProgress] = useState(0);
-  const [lastApiResponse, setLastApiResponse] = useState(null);
   const [webResources, setWebResources] = useState({});
   const [urlSummaries, setUrlSummaries] = useState({});
 
@@ -776,9 +721,6 @@ function App() {
             if (data.current_step) {
               setCurrentStep(data.current_step);
             }
-            if (data.progress) {
-              setProgress(data.progress); 
-            }
           } else if (data.status === "error") {
             // Handle error state
             setError(data.message || "Research failed with an unknown error");
@@ -832,9 +774,6 @@ function App() {
       
       const data = await response.json();
       console.log("Research task started:", data);
-      
-      // Store the API response for debugging
-      setLastApiResponse(data);
       
       if (!data.task_id) {
         throw new Error("Server response missing task ID");
