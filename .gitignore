@@ -1,0 +1,21 @@
+# Ignore environment variable files with secrets
+.env
+backend/.env
+
+# Ignore Python compiled files
+*.pyc
+__pycache__/
+
+# Ignore editor and system files
+.vscode/
+.DS_Store
+*.log
+
+# Ignore node_modules if you have frontend JavaScript projects
+node_modules/
+
+# Ignore build artifacts (if any)
+dist/
+build/
+
+
