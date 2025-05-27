@@ -539,53 +539,58 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
     setIsGenerating(true);
     
     try {
+      // Create report structure without relying on subtopics
       let reportContent = `# Comprehensive Report on ${research.query}\n\n`;
       reportContent += `## Executive Summary\n${research.summary}\n\n`;
       
-      // Add sections based on subtopics
-      if (research.subtopics && research.subtopics.length > 0) {
-        research.subtopics.forEach(subtopic => {
-          reportContent += `## ${subtopic}\n\n`;
-          // Find relevant summaries for this subtopic by keyword matching
-          const subtopicKeywords = subtopic.toLowerCase().split(/\s+/);
-          const relevantSummaries = Object.entries(urlSummaries || {})
-            .filter(([url, summary]) => {
-              const summaryText = typeof summary === 'string' ? summary : summary.summary || '';
-              return subtopicKeywords.some(keyword => 
-                summaryText.toLowerCase().includes(keyword) && keyword.length > 3
-              );
-            })
-            .map(([url, summary]) => {
-              const summaryText = typeof summary === 'string' ? summary : summary.summary || '';
-              return { url, summary: summaryText };
-            });
-          
-          // Add content based on relevant summaries
-          if (relevantSummaries.length > 0) {
-            reportContent += relevantSummaries.slice(0, 2).map(({ summary }) => summary).join('\n\n');
-          } else {
-            reportContent += `Information on ${subtopic} is still being compiled.\n\n`;
+      // Add a section that includes ALL URL summaries organized by source
+      reportContent += '## Source Summaries\n\n';
+      
+      if (Object.keys(urlSummaries || {}).length > 0) {
+        Object.entries(urlSummaries).forEach(([url, summaryData], index) => {
+          try {
+            const domain = new URL(url).hostname;
+            const title = typeof summaryData === 'object' && summaryData.title ? 
+              summaryData.title : `Source ${index + 1}`;
+            const summaryText = typeof summaryData === 'string' ? 
+              summaryData : (summaryData.summary || 'No summary available');
+            
+            reportContent += `### ${title} (${domain})\n\n`;
+            reportContent += `${summaryText}\n\n`;
+            reportContent += `[View source](${url})\n\n`;
+            reportContent += '---\n\n';
+          } catch (error) {
+            console.error(`Error processing URL ${url}:`, error);
           }
-          
-          reportContent += '\n\n';
         });
+      } else {
+        reportContent += 'No source summaries available.\n\n';
       }
       
-      // Add sources/references
+      // Add references/sources section
       reportContent += '## References\n\n';
       Object.keys(urlSummaries || {}).forEach((url, index) => {
-        const hostname = new URL(url).hostname;
-        reportContent += `${index + 1}. [${hostname}](${url})\n`;
+        try {
+          const hostname = new URL(url).hostname;
+          reportContent += `${index + 1}. [${hostname}](${url})\n`;
+        } catch (error) {
+          reportContent += `${index + 1}. [Source ${index + 1}](${url})\n`;
+        }
       });
       
       setReport(reportContent);
       setGenerationComplete(true);
     } catch (error) {
-      console.error("Error generating simple report:", error);
+      console.error("Error generating comprehensive report:", error);
       setReport(`Failed to generate report: ${error.message}`);
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // Add function to count summaries for display in button
+  const getSummaryCount = () => {
+    return Object.keys(urlSummaries || {}).length;
   };
 
   return (
@@ -596,6 +601,11 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
         <div className="text-center py-6">
           <p className="text-gray-700 mb-4 font-serif">
             Generate a comprehensive report based on all collected sources and summaries.
+            {getSummaryCount() > 0 && (
+              <span className="block mt-2 text-blue-600">
+                {getSummaryCount()} source summaries available for inclusion.
+              </span>
+            )}
           </p>
           <button
             onClick={generateSimpleReport}
@@ -611,7 +621,7 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
                 Generating...
               </>
             ) : (
-              "Generate Report"
+              `Generate Report with All Summaries (${getSummaryCount()})`
             )}
           </button>
         </div>
@@ -624,7 +634,20 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
               } else if (line.startsWith('## ')) {
                 return <h2 key={index} className="text-xl font-bold font-serif mt-6 mb-3 text-purple-800">{line.substring(3)}</h2>;
               } else if (line.startsWith('### ')) {
-                return <h3 key={index} className="text-lg font-bold font-serif mt-4 mb-2">{line.substring(4)}</h3>;
+                return <h3 key={index} className="text-lg font-bold font-serif mt-4 mb-2 text-purple-700">{line.substring(4)}</h3>;
+              } else if (line.startsWith('**Source:')) {
+                return <p key={index} className="my-2 text-blue-700 font-bold font-serif">{line}</p>;
+              } else if (line === '---') {
+                return <hr key={index} className="my-4 border-gray-300" />;
+              } else if (line.startsWith('[View source]')) {
+                return <p key={index} className="my-2">
+                  <a href={line.match(/\((.*?)\)/)[1]} 
+                     target="_blank" 
+                     rel="noopener noreferrer"
+                     className="text-blue-600 hover:underline">
+                    View original source
+                  </a>
+                </p>;
               } else if (line === '') {
                 return <div key={index} className="my-2"></div>;
               } else {
@@ -633,22 +656,34 @@ const ComprehensiveReport = ({ research, webResources, urlSummaries }) => {
             })}
           </div>
           
-          <div className="mt-4 flex justify-end">
-            <button
-              onClick={() => {
-                const blob = new Blob([report], { type: 'text/markdown' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${research.query.replace(/\s+/g, '_')}_report.md`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              }}
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-md mr-2"
-            >
-              Download as Markdown
-            </button>
+          <div className="mt-6 flex justify-between items-center">
+            <div className="text-sm text-gray-600">
+              <span className="font-medium">Sources included: </span>
+              {Object.keys(urlSummaries || {}).length}
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => {
+                  const blob = new Blob([report], { type: 'text/markdown' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${research.query.replace(/\s+/g, '_')}_report.md`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-md"
+              >
+                Download as Markdown
+              </button>
+              <button
+                onClick={generateSimpleReport}
+                className="px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md"
+              >
+                Regenerate Report
+              </button>
+            </div>
           </div>
         </div>
       )}
